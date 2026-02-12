@@ -29,11 +29,3 @@ The goal is to achieve 100% transition coverage of the FSM and verify all reacha
 * **Unit Tests**: Located in `/tests/unit`. These should be passed individually by module owners before integration.
 * **Integration Test**: Run `cache_tb.vhd` against the full `cache.vhd` top-level to verify end-to-end Avalon timing.
 
-
-
----
-
-## 🛠️ Development Workflow
-* **Branching**: Create a feature branch for your specific module (e.g., `git checkout -b feature-fsm`).
-* **Commits**: Commit often after passing local unit tests to ensure the main branch remains stable.
-* **Synchronization**: Ensure all internal ports match the agreed-upon interface spec in the source files.
