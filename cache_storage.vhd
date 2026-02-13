@@ -5,7 +5,7 @@ use ieee.numeric_std.all;
 entity cache_storage is
 	port(
 		-- Inputs:
-		clock: in std_logic;
+		clk: in std_logic;
 		reset: in std_logic;
 		word_offset: in std_logic_vector(1 downto 0); -- 2^2 words per block (4 words per block)
 		index: in std_logic_vector(4 downto 0); -- 2^5 blocks (32 blocks) 
@@ -20,15 +20,15 @@ entity cache_storage is
 		dirty: out std_logic;
 		tag_out: out std_logic_vector(5 downto 0); -- return address
 		data_out: out std_logic_vector(31 downto 0);
-		block_out: out std_logic_vector(127 downto 0);
+		block_out: out std_logic_vector(127 downto 0)
 	);
 end cache_storage;
 
 architecture rtl of cache_storage is
 
-	type data_array is array (0 to 31) of std_logic_vector(127 downto 0);
-	type tag_array is array (0 to 31) of std_logic_vector(5 downto 0);
-	type valid_dirty_array is array (0 to 31) of std_logic;
+	type data_array is array (0 to 31) of std_logic_vector(127 downto 0); -- 32 blocks of 128 bits
+	type tag_array is array (0 to 31) of std_logic_vector(5 downto 0); -- 32 blocks of 6 tag bits
+	type valid_dirty_array is array (0 to 31) of std_logic; -- 32 blocks of valid and dirty flag bits
 
 	signal data: data_array;
 	signal tags: tag_array;
@@ -51,18 +51,18 @@ begin
 		end if;
 
 		-- picking word within the specified block
-		if word_offset = "00" then -- word 1
-			data_out <= data(row)(31 downto 0);
-		elsif word_offset = "01" then -- word 2
-			data_out <= data(row)(63 downto 32);
-		elsif word_offset = "10" then -- word 3
-			data_out <= data(row)(95 downto 64);
-		else -- "11" word 4
-			data_out <= data(row)(127 downto 96);
+		if word_offset = "00" then 
+			data_out <= data(row)(31 downto 0); -- word 1
+		elsif word_offset = "01" then
+			data_out <= data(row)(63 downto 32); -- word 2
+		elsif word_offset = "10" then
+			data_out <= data(row)(95 downto 64); -- word 3
+		else
+			data_out <= data(row)(127 downto 96); -- word 4
 		end if;
 		
-		dirty <= dirty_bits(row);
-		tag_out <= tags(row);
+		dirty <= dirty_bits(row); -- outputs dirty bit status
+		tag_out <= tags(row); -- outputs tag
 		block_out <= data(row);
 
 	end process;
