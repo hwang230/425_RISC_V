@@ -5,7 +5,7 @@ use ieee.numeric_std.all;
 entity cache_storage is
 	port(
 		-- Inputs:
-		clk: in std_logic;
+		clock: in std_logic;
 		reset: in std_logic;
 		word_offset: in std_logic_vector(1 downto 0); -- 2^2 words per block (4 words per block)
 		index: in std_logic_vector(4 downto 0); -- 2^5 blocks (32 blocks) 
@@ -79,7 +79,7 @@ begin
 	end process;
 
 	-- writing to cache
-	process(clk, reset)
+	process(clock, reset)
 	begin
 
 		if reset = '1' then -- clear valid and dirty bits in cache
@@ -88,7 +88,7 @@ begin
 				dirty_bits(n) <= '0';
 			end loop;
 
-		elsif rising_edge(clk) then
+		elsif rising_edge(clock) then
 
 			if write_word = '1' then
 				dirty_bits(idx) <= '1';
