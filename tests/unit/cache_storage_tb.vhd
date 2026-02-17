@@ -87,7 +87,62 @@ end process;
 
 test_process: process
 begin 
+    -- TEST 1: System Reset
+    REPORT "Reset Test Case";
+    reset <= '1';
+    wait for clk_period;
+    reset <= '0';
+    wait for clk_period;
+    
+    ASSERT (valid = '0' and dirty = '0' and hit = '0') REPORT "FAIL: Reset did not clear status bits!" SEVERITY ERROR;
 
+    -- TEST 2: Cold Miss & Allocation (Write Block)
+    -- Simulating a memory fill to the very last row at index 31
+    index <= "11111"; 
+    tag   <= "101010"; 
+    block_in <= x"DDDDDDDD_CCCCCCCC_BBBBBBBB_AAAAAAAA"; -- x turns hexadecimals into binary
+    
+    wait for 100 ps; -- ensure combinational logic finishes
+    ASSERT (hit = '0') REPORT "FAIL: Should be a miss before writing." SEVERITY ERROR;
+    
+    write_block <= '1';
+    wait for clk_period;
+    write_block <= '0';
+    wait for 100 ps;
+    
+    ASSERT (valid = '1' and hit = '1') REPORT "FAIL: Block not allocated correctly." SEVERITY ERROR;
 
-end process; 
+    -- TEST 3: Word Slicing (Multiplexer Check)
+    -- Testing if the combinational data_out picks the right word
+    word_offset <= "00"; 
+    wait for 100 ps;
+    ASSERT (data_out = x"AAAAAAAA") REPORT "FAIL: Offset 00 failed." SEVERITY ERROR;
+    
+    word_offset <= "11"; 
+    wait for 100 ps;
+    ASSERT (data_out = x"DDDDDDDD") REPORT "FAIL: Offset 11 failed." SEVERITY ERROR;
+
+    -- TEST 4: CPU Write Hit (Dirty Bit Check)
+    -- CPU modifies Word 2 (offset 01)
+    data_in <= x"12345678";
+    word_offset <= "01";
+    write_word <= '1';
+    wait for clk_period;
+    write_word <= '0';
+    wait for 100 ps;
+    
+    ASSERT (dirty = '1') REPORT "FAIL: Dirty bit should be set after CPU write." SEVERITY ERROR;
+    ASSERT (data_out = x"12345678") REPORT "FAIL: Data not updated in storage." SEVERITY ERROR;
+
+    -- TEST 5: Conflict Miss (Tag Comparison)
+    -- Same index (31), but a completely different tag
+    tag <= "010101"; 
+    wait for 100 ps;
+    
+    ASSERT (tag_match = '0' and hit = '0') REPORT "FAIL: Should miss on tag mismatch." SEVERITY ERROR;
+    ASSERT (valid = '1' and dirty = '1') REPORT "FAIL: Valid/Dirty should persist on miss." SEVERITY ERROR;
+
+    REPORT "ALL STORAGE UNIT TESTS COMPLETED.";
+    wait; 
+end process;
 end; 
