@@ -72,6 +72,9 @@ signal data_out: std_logic_vector(31 downto 0);
 signal block_out: std_logic_vector(127 downto 0);
 
 
+-- fsm state declaraion
+type state_type is (IDLE, WRITEBACK, REFETCH, COMPLETE);
+signal state: state_type := IDLE;
 
 begin
 -- make circuits here
@@ -113,6 +116,7 @@ begin
 			m_write <= '0';
 			m_writedata <= (others => '0');
 			m_addr <= 0;
+			state <= IDLE;
 
 		elsif (rising_edge(clock))then
 			-- only triggers when a read or write is requested
@@ -122,31 +126,44 @@ begin
 			s_waitrequest <= '1';
 			write_word <= '0';
 			write_block <= '0';
-			if (s_read = '1') then
-			-- case of requesting read 
-			-- read hit: 
-				if (hit = '1') then
-					-- write the result to cache output
-					s_readdata <= data_out;
-					-- reset waitrequest to 0 once transaction completes
-					s_waitrequest <= '0';
-				else 
-					-- read miss
 
-				end if;
-			elsif (s_write = '1') then 
-			-- case of requesting write
-				if (hit = '1') then
-					-- tell storage what data to write
-					data_in <= s_writedata; 
-					-- tell storage to store this value to the specified addr
-					write_word <= '1';
+			case state is 
+				when IDLE =>
+					if (s_read = '1') then
+					-- case of requesting read 
+					-- read hit: 
+						if (hit = '1') then
+							-- write the result to cache output
+							s_readdata <= data_out;
+							-- reset waitrequest to 0 once transaction completes
+							s_waitrequest <= '0';
+						else 
+							-- read miss
+		
+						end if;
+					elsif (s_write = '1') then 
+					-- case of requesting write
+						if (hit = '1') then
+							-- tell storage what data to write
+							data_in <= s_writedata; 
+							-- tell storage to store this value to the specified addr
+							write_word <= '1';
+		
+							s_waitrequest <= '0';
+						else
+							-- write miss 
+						end if;
+					end if;
 
-					s_waitrequest <= '0';
-				else
-					-- write miss 
-				end if;
-			end if;
+				when WRITEBACK =>
+
+				when REFETCH =>
+
+				when COMPLETE =>
+			
+			end case;
+
+			
 
 		end if; 
 	end process;
