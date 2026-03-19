@@ -86,7 +86,9 @@ signal req_writedata : std_logic_vector(31 downto 0) := (others => '0');
 signal byte_count    : integer range 0 to 15 := 0;
 signal refetch_block  : std_logic_vector(127 downto 0) := (others => '0');
 
-
+-- for avalon bus
+signal tmp_busy: std_logic := '0';
+signal tmp_out_block: std_logic_vector(127 downto 0);
 begin
 -- make circuits here
 
@@ -117,6 +119,7 @@ begin
 	
 	process(clock, reset)
 	begin
+		variable shift: integer;
 		if (reset = '1') then
 			-- reset all intermediate signals
             write_word <= '0';
@@ -130,12 +133,14 @@ begin
 			state <= IDLE;
 			pending_read  <= '0';
 			pending_write <= '0';
-			req_tag       <= (others => '0');
-			req_index     <= (others => '0');
-			req_offset    <= (others => '0');
+			req_tag <= (others => '0');
+			req_index <= (others => '0');
+			req_offset <= (others => '0');
 			req_writedata <= (others => '0');
-			byte_count    <= 0;
-			refetch_block  <= (others => '0');
+			byte_count <= 0;
+			refetch_block <= (others => '0');
+			tmp_busy <= '0';
+			tmp_block <= (others => '0');
 		
 		elsif (rising_edge(clock))then
 			-- only triggers when a read or write is requested
@@ -209,9 +214,43 @@ begin
 					end if;
 
 				when WRITEBACK =>
-					
+					-- should write back dirty blocks here	
+					m_write <= '1'; -- trigger memory write back
+					-- set the RAM addr with offset 0 then continues with byte_count
+					m_addr <= to_integer(unsigned(tag_out & req_index & "0000")) + byte_count;
+					shift := 8*byte_count;
+					-- write the dirty data back to memory byte by byte
+					m_writedata <= block_out(shift+7 downto shift);
+					-- when the memory finishes each request 
+					if m_waitrequest = '0' then
+						if byte_count = 15 then
+							byte_count <= 0;
+							state <= REFETCH;
+						else
+							byte_count <= byte_count + 1;
+						end if;
+					end if;
+					byte_count <= '0';
+
 				when REFETCH =>
-					
+					-- should fetch the block from main memory through avalon
+					-- Should place the block in refetch_block
+					m_read <= '1'; -- trigger memory read
+					-- tell the memory where to look at the data by setting addr
+					m_addr <= to_integer(unsigned(req_tag & req_index & "0000")) + byte_count;
+					shift := 8*byte_count;
+
+					if m_waitrequest = '0' then
+						-- m_readdata comes from data found in m_addr
+						refetch_block(shift+7 downto shift) <= m_readdata;
+						if byte_count = 15 then
+							byte_count <= 0;
+							state <= COMPLETE;
+						else
+							byte_count <= byte_count + 1;
+						end if;
+					end if;
+
 				when COMPLETE =>
 					-- first move the fetch block into storage
 					if (pending_read = '1') then
@@ -253,9 +292,6 @@ begin
 					pending_write <= '0';
 					state <= IDLE;
 			end case;
-
-			
-
 		end if; 
 	end process;
 
