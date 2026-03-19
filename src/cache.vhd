@@ -73,7 +73,7 @@ signal block_out: std_logic_vector(127 downto 0);
 
 
 -- fsm state declaraion
-type state_type is (IDLE, WRITEBACK, REFETCH, COMPLETE);
+type state_type is (IDLE, WRITEBACK, REFETCH, COMPLETE, STORE_BLOCK);
 signal state: state_type := IDLE;
 
 -- signals to remember the request
@@ -209,11 +209,49 @@ begin
 					end if;
 
 				when WRITEBACK =>
-				
+					
 				when REFETCH =>
-
+					
 				when COMPLETE =>
-			
+					-- first move the fetch block into storage
+					if (pending_read = '1') then
+						-- serving read miss by preparing block back to storage
+						block_in <= refetch_block;
+
+						-- select the requested word based on offset
+						if req_offset = "00" then
+							s_readdata <= refetch_block(31 downto 0);
+						elsif req_offset = "01" then
+							s_readdata <= refetch_block(63 downto 32);
+						elsif req_offset = "10" then
+							s_readdata <= refetch_block(95 downto 64);
+						else
+							s_readdata <= refetch_block(127 downto 96);
+						end if;
+
+					elsif (pending_write = '1') then
+						-- serving write miss by preparing the block with the data that needs to be written to
+						if req_offset = "00" then
+							block_in <= refetch_block(127 downto 32) & req_writedata;
+						elsif req_offset = "01" then
+							block_in <= refetch_block(127 downto 64) & req_writedata & refetch_block(31 downto 0);
+						elsif req_offset = "10" then
+							block_in <= refetch_block(127 downto 96) & req_writedata & refetch_block(63 downto 0);
+						else
+							block_in <= req_writedata & refetch_block(95 downto 0);
+						end if;
+					end if;
+					-- bring state back to IDLE after completing
+					state <= STORE_BLOCK;
+
+				when STORE_BLOCK => 
+					-- store block back to storage by triggering with write_block
+					-- turn off the request 
+					write_block <= '1';
+					s_waitrequest <= '0';
+					pending_read <= '0';
+					pending_write <= '0';
+					state <= IDLE;
 			end case;
 
 			
