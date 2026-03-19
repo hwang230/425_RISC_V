@@ -76,6 +76,17 @@ signal block_out: std_logic_vector(127 downto 0);
 type state_type is (IDLE, WRITEBACK, REFETCH, COMPLETE);
 signal state: state_type := IDLE;
 
+-- signals to remember the request
+signal pending_read  : std_logic := '0';
+signal pending_write : std_logic := '0';
+signal req_tag       : std_logic_vector(5 downto 0) := (others => '0');
+signal req_index     : std_logic_vector(4 downto 0) := (others => '0');
+signal req_offset    : std_logic_vector(1 downto 0) := (others => '0');
+signal req_writedata : std_logic_vector(31 downto 0) := (others => '0');
+signal byte_count    : integer range 0 to 15 := 0;
+signal refetch_block  : std_logic_vector(127 downto 0) := (others => '0');
+
+
 begin
 -- make circuits here
 
@@ -103,7 +114,7 @@ begin
             data_out    => data_out,
             block_out   => block_out
 		);
-
+	
 	process(clock, reset)
 	begin
 		if (reset = '1') then
@@ -117,7 +128,15 @@ begin
 			m_writedata <= (others => '0');
 			m_addr <= 0;
 			state <= IDLE;
-
+			pending_read  <= '0';
+			pending_write <= '0';
+			req_tag       <= (others => '0');
+			req_index     <= (others => '0');
+			req_offset    <= (others => '0');
+			req_writedata <= (others => '0');
+			byte_count    <= 0;
+			refetch_block  <= (others => '0');
+		
 		elsif (rising_edge(clock))then
 			-- only triggers when a read or write is requested
 			-- m_* variables are used when connecting to memory - default to 0
@@ -126,7 +145,7 @@ begin
 			s_waitrequest <= '1';
 			write_word <= '0';
 			write_block <= '0';
-
+			
 			case state is 
 				when IDLE =>
 					if (s_read = '1') then
@@ -137,9 +156,27 @@ begin
 							s_readdata <= data_out;
 							-- reset waitrequest to 0 once transaction completes
 							s_waitrequest <= '0';
+							pending_read <= '0';
+							pending_write <= '0';
 						else 
 							-- read miss
-		
+							-- Dirty cache
+							-- store the request information 
+							req_tag    <= tag;
+							req_index  <= index;
+							req_offset <= word_offset;
+							byte_count <= 0;
+							pending_read  <= '1';
+							pending_write <= '0';
+
+							if (dirty = '1') then
+								state <= WRITEBACK;
+								-- should go through avalon bus now
+							else 
+								-- Not dirty cache -> no need to writeback
+								-- fetch from memory
+								state <= REFETCH;
+							end if;
 						end if;
 					elsif (s_write = '1') then 
 					-- case of requesting write
@@ -148,15 +185,31 @@ begin
 							data_in <= s_writedata; 
 							-- tell storage to store this value to the specified addr
 							write_word <= '1';
-		
 							s_waitrequest <= '0';
+							pending_read <= '0';
+							pending_write <= '0';
 						else
 							-- write miss 
+							-- Dirty cache
+							req_writedata <= s_writedata;
+							req_tag    <= tag;
+							req_index  <= index;
+							req_offset <= word_offset;
+							byte_count <= 0;
+							pending_read  <= '0';
+							pending_write <= '1';
+
+							if (dirty = '1') then
+								state <= WRITEBACK;
+							else 
+							-- Not dirty cache
+								state <= REFETCH;
+							end if;
 						end if;
 					end if;
 
 				when WRITEBACK =>
-
+				
 				when REFETCH =>
 
 				when COMPLETE =>
