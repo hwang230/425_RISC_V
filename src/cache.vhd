@@ -85,10 +85,9 @@ signal req_offset    : std_logic_vector(1 downto 0) := (others => '0');
 signal req_writedata : std_logic_vector(31 downto 0) := (others => '0');
 signal byte_count    : integer range 0 to 15 := 0;
 signal refetch_block  : std_logic_vector(127 downto 0) := (others => '0');
+signal read_issued  : std_logic := '0';
+signal write_issued : std_logic := '0';
 
--- for avalon bus
-signal tmp_busy: std_logic := '0';
-signal tmp_out_block: std_logic_vector(127 downto 0);
 begin
 -- make circuits here
 
@@ -118,8 +117,9 @@ begin
 		);
 	
 	process(clock, reset)
-	begin
 		variable shift: integer;
+	begin
+		
 		if (reset = '1') then
 			-- reset all intermediate signals
             write_word <= '0';
@@ -139,8 +139,7 @@ begin
 			req_writedata <= (others => '0');
 			byte_count <= 0;
 			refetch_block <= (others => '0');
-			tmp_busy <= '0';
-			tmp_block <= (others => '0');
+
 		
 		elsif (rising_edge(clock))then
 			-- only triggers when a read or write is requested
@@ -212,44 +211,61 @@ begin
 							end if;
 						end if;
 					end if;
-
+				
 				when WRITEBACK =>
-					-- should write back dirty blocks here	
-					m_write <= '1'; -- trigger memory write back
-					-- set the RAM addr with offset 0 then continues with byte_count
 					m_addr <= to_integer(unsigned(tag_out & req_index & "0000")) + byte_count;
-					shift := 8*byte_count;
-					-- write the dirty data back to memory byte by byte
-					m_writedata <= block_out(shift+7 downto shift);
-					-- when the memory finishes each request 
-					if m_waitrequest = '0' then
-						if byte_count = 15 then
-							byte_count <= 0;
-							state <= REFETCH;
-						else
-							byte_count <= byte_count + 1;
+					shift := 8 * byte_count;
+
+					-- byte request not yet launched
+					if write_issued = '0' then
+						m_write <= '1';
+						m_writedata <= block_out(shift + 7 downto shift);
+						write_issued <= '1';
+					else
+						-- request issued for this byte so deassert m_write
+						m_write <= '0';
+						if m_waitrequest = '0' then
+							if byte_count = 15 then
+								-- reset after all bytes transferred
+								byte_count <= 0;
+								write_issued <= '0';
+								state <= REFETCH;
+							else
+								-- increase if not reached 16 bytes yet
+								byte_count <= byte_count + 1;
+								write_issued <= '0';
+							end if;
 						end if;
-					end if;
-					byte_count <= '0';
+					end if;	
 
 				when REFETCH =>
-					-- should fetch the block from main memory through avalon
-					-- Should place the block in refetch_block
-					m_read <= '1'; -- trigger memory read
-					-- tell the memory where to look at the data by setting addr
-					m_addr <= to_integer(unsigned(req_tag & req_index & "0000")) + byte_count;
-					shift := 8*byte_count;
-
-					if m_waitrequest = '0' then
-						-- m_readdata comes from data found in m_addr
-						refetch_block(shift+7 downto shift) <= m_readdata;
-						if byte_count = 15 then
-							byte_count <= 0;
-							state <= COMPLETE;
+    					m_addr <= to_integer(unsigned(req_tag & req_index & "0000")) + byte_count;
+    					shift := 8 * byte_count;
+						
+						-- byte request not yet launched
+    					if read_issued = '0' then
+							m_read <= '1';
+							read_issued <= '1';
 						else
-							byte_count <= byte_count + 1;
+						-- request issued for this byte so deassert m_read
+							m_read <= '0';
+
+						if m_waitrequest = '0' then
+							refetch_block(shift + 7 downto shift) <= m_readdata;
+
+							if byte_count = 15 then
+								-- reset after all bytes transferred
+								byte_count <= 0;
+								read_issued <= '0';
+								state <= COMPLETE;
+							else
+								-- increase if not reached 16 bytes yet
+								byte_count <= byte_count + 1;
+								read_issued <= '0';
+							end if;
 						end if;
 					end if;
+
 
 				when COMPLETE =>
 					-- first move the fetch block into storage

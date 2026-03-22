@@ -35,5 +35,5 @@ vsim work.cache_tb
 ;# Add the waves
 AddWaves
 
-;# Run for 150 ns
-run 150ns
+;# Run for 10000 ns
+run 10000ns
