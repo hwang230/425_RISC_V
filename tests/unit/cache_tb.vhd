@@ -253,7 +253,7 @@ begin
     cpu_read(A0, rd_data, "Verify write hit on A0");
     assert rd_data = W3 report "Write hit verification failed on A0" severity error;
 
-    report "All reachable cache test cases completed successfully." severity note;
+    -- report "All reachable cache test cases completed successfully." severity note;
     wait;
 end process;
 
