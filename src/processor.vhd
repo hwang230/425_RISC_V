@@ -124,6 +124,11 @@ port map(
 );
 
 -- trigger when opcode, funct3 and funct7 are changed
+-- TODO: 
+-- Input: opcode, funct3, funct7
+-- Output: assign the correct alu_op
+-- This is combinational logic triggered by sensitivities in opcode, funct3 and funct7. 
+-- This is used to ensure decode finishes in 1 cc
 process(opcode, funct3, funct7) 
 begin
     -- reset to default
@@ -131,9 +136,8 @@ begin
 
     -- determine which process 
     case opcode is
-    
+
     end case; 
-    decode_done <= '1';
     -- should go back to execute now
 end process;
 
@@ -183,21 +187,18 @@ begin
             rs1 <= instr_IF_ID(19 downto 15);
             rs2 <= instr_IF_ID(24 downto 20);
             rd  <= instr_IF_ID(11 downto 7);
-        else
-            -- safety to make sure decode_done does not stay on until another fetch is ready
         end if;  
 
         -- EX stage
-        if (decode_done = '1') then
-            decode_done <= '0';
-            -- ALU to be implemented
-            -- use opcode to determine the type of instruction
-            ex_done <= '1';
-        else
-            ex_done <= '0';
-        end if;
         
-
+        -- TODO
+        -- Input: alu_op, rs1, rs2, rd
+        -- Task: create ALU module that performs the operation
+        
+        
+        
+        
+        
         -- MEM stage
         
 
