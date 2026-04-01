@@ -65,7 +65,7 @@ PORT (
 end component;
 
 -- memory signals for data memory
-constant ram_size_: integer := 32768;
+constant ram_size_: integer := 32768; -- to define the memory size 
 signal d_writedata: STD_LOGIC_VECTOR (7 DOWNTO 0) := (others => '0');
 signal d_addr: INTEGER RANGE 0 TO ram_size_-1 := 0;
 signal d_write: STD_LOGIC := '0';
@@ -86,10 +86,10 @@ signal i_waitrequest: STD_LOGIC := '0';
 type reg_file_t is array (0 to 31) of std_logic_vector(31 downto 0);
 signal regs: reg_file_t := (others => (others => '0')); -- register file with 32 registers with 32 bits each
 signal pc: INTEGER := 0; -- program counter
-signal instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- store the fetched instruction
+signal if_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- store the fetched instruction
 signal fetch_busy: STD_LOGIC := '0'; -- to inform that we are not done fetching
 signal fetch_count: INTEGER range 0 to 3 := 0; -- count how many bytes are fetched for instruction
-signal instr_IF_ID: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latch instruction from fetch to decode
+signal if_id_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latch instruction from fetch to decode
 
 -- intermediate signal to inform next stage to proceed
 signal fetch_done: STD_LOGIC := '0';
@@ -185,6 +185,7 @@ begin
         -- reset all intermediate signals here
     elsif (rising_edge(clock)) then
         -- IF stage
+        -- TODO: stall if hazard detected in ID 
         if (fetch_busy = '0') then
             -- tell memory to get the data
             i_read <= '1';
@@ -195,14 +196,14 @@ begin
             -- only take data when request served
             if i_waitrequest = '0' then
             -- Retrieve 4 bytes, but each memory access returns 1 byte
-                instr(fetch_count*8+7 downto fetch_count*8) <= i_readdata;
+                if_instr(fetch_count*8+7 downto fetch_count*8) <= i_readdata;
 
                 -- adjust pc and reset to take in another cycle
                 if (fetch_count = 3) then
                     i_read <= '0'; -- turn off after retrieving
                     pc <= pc + 4; -- normal cases
                     fetch_busy <= '0';
-                    instr_IF_ID <= i_readdata & instr(23 downto 0);
+                    if_id_instr <= i_readdata & instr(23 downto 0);
                     -- tell decode to start as we got all 32 bits
                     fetch_done <= '1';
                 else 
@@ -214,7 +215,11 @@ begin
         end if;
         
         -- ID stage 
-        -- should only decode once instr_IF_ID is filled
+        -- TODO: implement hazard detection
+        -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
+        -- If hazard, should stall until the instruction completes 
+
+        -- should only decode once if_id_instr is filled
         if (fetch_done = '1') then
             fetch_done <= '0';
             -- assign each var the respective value retrieved from fetch 
@@ -225,7 +230,7 @@ begin
             rs2 <= instr_IF_ID(24 downto 20);
             rd  <= instr_IF_ID(11 downto 7);
         end if;  
-        
+
         -- Latch result from DECODE to EXECUTE
         id_ex_alu_op <= id_alu_op;
         id_ex_rs1_val <= regs(to_integer(unsigned(rs1))); -- 32 bit value stored in rs1
@@ -234,7 +239,7 @@ begin
         id_ex_mem_write <= id_mem_write;
         id_ex_mem_read <= id_mem_read;
         id_ex_reg_write <= id_reg_write;
-
+        
 
         -- EX stage
         -- TODO
