@@ -89,6 +89,7 @@ signal pc: INTEGER := 0; -- program counter
 signal if_id_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latch instruction from fetch to decode
 
 -- intermediate signal to inform next stage to proceed
+signal start_new_fetch: STD_LOGIC := '1'; -- to inform fetch stage to fetch new instructions 
 signal id_alu_op: STD_LOGIC_VECTOR(3 downto 0); 
 signal id_mem_read: STD_LOGIC := '0'; -- store control signal for load operation
 signal id_mem_write: STD_LOGIC := '0'; -- store control signal for store operation
@@ -106,6 +107,7 @@ signal ex_mem_mem_read: STD_LOGIC := '0'; -- to latch the signal from decode to 
 signal ex_mem_mem_write: STD_LOGIC := '0'; -- to latch the signal from decode to memory for store
 signal ex_mem_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the rd from EX to MEM
 signal ex_mem_mem_to_reg_write: STD_LOGIC := '0'; -- latch the mem_to_reg signal
+signal ex_mem_rs2_val: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to latch rs2 value for store
 signal mem_wb_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the rd from EX to MEM
 signal mem_wb_ALU_output: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- latch alu output from ex_mem to mem_wb
 signal id_ex_reg_write: STD_LOGIC := '0'; -- check if the instruction is a register operand
@@ -191,16 +193,24 @@ begin
     if (reset = '1') then 
         -- reset all intermediate signals here
     elsif (rising_edge(clock)) then
-        -- IF stage
+
+        --------------
+        -- IF stage --
+        --------------
+        i_read <= '0';
         -- TODO: stall if hazard detected in ID 
-        i_read <= '1';
-        i_addr <= pc/4;
+        if (start_new_fetch = '1') then
+            i_read <= '1';
+            i_addr <= pc/4;
+        end if;
         if (i_waitrequest = '0') then
             if_id_instr <= i_readdata;
             pc <= pc + 4;
         end if;
 
-        -- ID stage 
+        --------------
+        -- ID stage --
+        -------------- 
         -- TODO: implement hazard detection
         -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
         -- If hazard, should stall until the instruction completes 
@@ -223,7 +233,10 @@ begin
         id_ex_reg_write <= id_reg_write;
         id_ex_mem_to_reg_write <= id_mem_to_reg_write;
 
-        -- EX stage
+        --------------
+        -- EX stage --
+        --------------
+
         -- TODO
         -- Input: id_ex_alu_op, id_ex_rs1, id_ex_rs2, id_ex_rd
         -- Output: ex_ALU_output
@@ -237,8 +250,15 @@ begin
         ex_mem_reg_write <= id_ex_reg_write; 
         ex_mem_ALU_output <= ex_ALU_output;
         ex_mem_mem_to_reg_write <= id_ex_mem_to_reg_write;
+        ex_mem_rs2_val <= id_ex_rs2_val;
 
-        -- MEM stage
+        ---------------
+        -- MEM stage --
+        ---------------
+
+        -- turn off the data mem signals before then turn it on afterwards if necessary
+        d_write <= '0';
+        d_read <= '0';
         if (ex_mem_mem_read = '1') then
             -- perform load: MEM access now return 4 bytes each
             d_read <= '1';
@@ -248,15 +268,21 @@ begin
             end if;
         elsif (ex_mem_mem_write = '1') then
             -- perform store
-            -- TODO: implement storing 4 bytes value to mem
+            d_write <= '1';
+            d_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
+            d_writedata <= ex_mem_rs2_val;
         end if;
         -- latch the control signals and relevant intermediate results
+
         mem_wb_rd <= ex_mem_rd;
         mem_wb_ALU_output <= ex_mem_ALU_output;
         mem_wb_reg_write <= ex_mem_reg_write; 
         mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
 
-        -- WB stage
+        --------------
+        -- WB stage --
+        --------------
+        
         -- Writing back to registers where needed
         -- protect x0 register 
         if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000") then
