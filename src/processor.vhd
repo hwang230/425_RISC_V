@@ -55,30 +55,30 @@ GENERIC(
 );
 PORT (
     clock: IN STD_LOGIC;
-    writedata: IN STD_LOGIC_VECTOR (7 DOWNTO 0);
-    address: IN INTEGER RANGE 0 TO ram_size-1;
+    writedata: IN STD_LOGIC_VECTOR (31 DOWNTO 0);
+    address: IN INTEGER RANGE 0 TO ram_size/4-1;
     memwrite: IN STD_LOGIC;
     memread: IN STD_LOGIC;
-    readdata: OUT STD_LOGIC_VECTOR (7 DOWNTO 0);
+    readdata: OUT STD_LOGIC_VECTOR (31 DOWNTO 0);
     waitrequest: OUT STD_LOGIC
 );
 end component;
 
 -- memory signals for data memory
-constant ram_size_: integer := 32768; -- to define the memory size 
-signal d_writedata: STD_LOGIC_VECTOR (7 DOWNTO 0) := (others => '0');
+constant ram_size_: integer := 32768/4; -- to define the memory size 
+signal d_writedata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0');
 signal d_addr: INTEGER RANGE 0 TO ram_size_-1 := 0;
 signal d_write: STD_LOGIC := '0';
 signal d_read: STD_LOGIC := '0';
-signal d_readdata: STD_LOGIC_VECTOR (7 DOWNTO 0) := (others => '0');
+signal d_readdata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0');
 signal d_waitrequest: STD_LOGIC := '0';
 
 -- memory signals for instruction memory
-signal i_writedata: STD_LOGIC_VECTOR (7 DOWNTO 0) := (others => '0'); -- won't be needed
+signal i_writedata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0'); -- won't be needed
 signal i_addr: INTEGER RANGE 0 TO ram_size_-1 := 0;
 signal i_write: STD_LOGIC := '0'; -- won't be needed
 signal i_read: STD_LOGIC := '0';
-signal i_readdata: STD_LOGIC_VECTOR (7 DOWNTO 0) := (others => '0');
+signal i_readdata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0');
 signal i_waitrequest: STD_LOGIC := '0';
 
 -- declare the register file
@@ -86,33 +86,36 @@ signal i_waitrequest: STD_LOGIC := '0';
 type reg_file_t is array (0 to 31) of std_logic_vector(31 downto 0);
 signal regs: reg_file_t := (others => (others => '0')); -- register file with 32 registers with 32 bits each
 signal pc: INTEGER := 0; -- program counter
-signal if_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- store the fetched instruction
-signal fetch_busy: STD_LOGIC := '0'; -- to inform that we are not done fetching
-signal fetch_count: INTEGER range 0 to 3 := 0; -- count how many bytes are fetched for instruction
 signal if_id_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latch instruction from fetch to decode
 
 -- intermediate signal to inform next stage to proceed
-signal fetch_done: STD_LOGIC := '0';
-signal decode_done: STD_LOGIC := '0';
 signal id_alu_op: STD_LOGIC_VECTOR(3 downto 0); 
 signal id_mem_read: STD_LOGIC := '0'; -- store control signal for load operation
 signal id_mem_write: STD_LOGIC := '0'; -- store control signal for store operation
+signal id_mem_to_reg_write: STD_LOGIC := '0'; -- store control signal for mem to register operation
 signal id_reg_write: STD_LOGIC := '0'; -- store control signal for load operation
 signal id_ex_alu_op: STD_LOGIC_VECTOR(3 downto 0); -- latch the operation
 signal id_ex_rs2_val, id_ex_rs1_val: STD_LOGIC_VECTOR(31 downto 0); -- latch the values from registrs
 signal id_ex_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the destination register
 signal id_ex_mem_read: STD_LOGIC := '0'; -- to indicate if instruction requires access to data memory (latched from decode)
 signal id_ex_mem_write: STD_LOGIC := '0'; -- to indicate if instruction requires access to data memory (latched from decode)
+signal id_ex_mem_to_reg_write: STD_LOGIC := '0'; -- to latch the mem_to_reg controls signal
 signal ex_ALU_output: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- result from ALU
 signal ex_mem_ALU_output: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- latch ALU result onto register
 signal ex_mem_mem_read: STD_LOGIC := '0'; -- to latch the signal from decode to memory for load
 signal ex_mem_mem_write: STD_LOGIC := '0'; -- to latch the signal from decode to memory for store
 signal ex_mem_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the rd from EX to MEM
+signal ex_mem_mem_to_reg_write: STD_LOGIC := '0'; -- latch the mem_to_reg signal
 signal mem_wb_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the rd from EX to MEM
 signal mem_wb_ALU_output: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- latch alu output from ex_mem to mem_wb
 signal id_ex_reg_write: STD_LOGIC := '0'; -- check if the instruction is a register operand
 signal ex_mem_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from execute to memory
 signal mem_wb_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from memory to writeback
+signal mem_wb_mem_to_reg_write: STD_LOGIC := '0'; -- latch the mem_to_reg signal from memory to writeback
+signal mem_mem_transfer_done: STD_LOGIC := '0'; -- to indicate if the memory operations in MEM is completed or not
+signal mem_transfer_count: INTEGER range 0 to 3 := 0; -- to indicate how many bytes are sent
+signal mem_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to store the read data
+signal mem_wb_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to latch read data
 begin
 -- data memory
 D_MEM: memory
@@ -158,22 +161,26 @@ begin
         -- load op
         id_mem_read <= '1';
         id_mem_write <= '0';
-        id_reg_write <= '0';
+        id_reg_write <= '1';
+        id_mem_to_reg_write <= '1';
     elsif (opcode = OPCODE_STORE) then
         -- store op
         id_mem_write <= '1';
         id_mem_read <= '0';
         id_reg_write <= '0';
-    elsif (opcode = OPCODE_R) then
+        id_mem_to_reg_write <= '0';
+    elsif (opcode = OPCODE_R or opcode = OPCODE_IMM) then
         -- ALU with register
         id_reg_write <= '1';
         id_mem_read <= '0';
         id_mem_write <= '0';
+        id_mem_to_reg_write <= '0';
     else 
         -- rest of ALU
         id_mem_read <= '0';
         id_mem_write <= '0';
         id_reg_write <= '0';
+        id_mem_to_reg_write <= '0';
     end if;
     -- go back to execute 
 end process;
@@ -186,50 +193,25 @@ begin
     elsif (rising_edge(clock)) then
         -- IF stage
         -- TODO: stall if hazard detected in ID 
-        if (fetch_busy = '0') then
-            -- tell memory to get the data
-            i_read <= '1';
-            i_addr <= pc;
-            fetch_busy <= '1';
-            fetch_count <= 0;
-        else 
-            -- only take data when request served
-            if i_waitrequest = '0' then
-            -- Retrieve 4 bytes, but each memory access returns 1 byte
-                if_instr(fetch_count*8+7 downto fetch_count*8) <= i_readdata;
-
-                -- adjust pc and reset to take in another cycle
-                if (fetch_count = 3) then
-                    i_read <= '0'; -- turn off after retrieving
-                    pc <= pc + 4; -- normal cases
-                    fetch_busy <= '0';
-                    if_id_instr <= i_readdata & instr(23 downto 0);
-                    -- tell decode to start as we got all 32 bits
-                    fetch_done <= '1';
-                else 
-                    -- not done, continue to fetch another byte
-                    fetch_count <= fetch_count + 1;
-                    i_addr <= pc + fetch_count + 1;
-                end if;
-            end if;
+        i_read <= '1';
+        i_addr <= pc/4;
+        if (i_waitrequest = '0') then
+            if_id_instr <= i_readdata;
+            pc <= pc + 4;
         end if;
-        
+
         -- ID stage 
         -- TODO: implement hazard detection
         -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
         -- If hazard, should stall until the instruction completes 
 
-        -- should only decode once if_id_instr is filled
-        if (fetch_done = '1') then
-            fetch_done <= '0';
-            -- assign each var the respective value retrieved from fetch 
-            opcode <= instr_IF_ID(6 downto 0);
-            funct3 <= instr_IF_ID(14 downto 12);
-            funct7 <= instr_IF_ID(31 downto 25);
-            rs1 <= instr_IF_ID(19 downto 15);
-            rs2 <= instr_IF_ID(24 downto 20);
-            rd  <= instr_IF_ID(11 downto 7);
-        end if;  
+        -- assign each var the respective value retrieved from fetch 
+        opcode <= if_id_instr(6 downto 0);
+        funct3 <= if_id_instr(14 downto 12);
+        funct7 <= if_id_instr(31 downto 25);
+        rs1 <= if_id_instr(19 downto 15);
+        rs2 <= if_id_instr(24 downto 20);
+        rd  <= if_id_instr(11 downto 7);
 
         -- Latch result from DECODE to EXECUTE
         id_ex_alu_op <= id_alu_op;
@@ -239,7 +221,7 @@ begin
         id_ex_mem_write <= id_mem_write;
         id_ex_mem_read <= id_mem_read;
         id_ex_reg_write <= id_reg_write;
-        
+        id_ex_mem_to_reg_write <= id_mem_to_reg_write;
 
         -- EX stage
         -- TODO
@@ -254,26 +236,38 @@ begin
         ex_mem_rd <= id_ex_rd;
         ex_mem_reg_write <= id_ex_reg_write; 
         ex_mem_ALU_output <= ex_ALU_output;
+        ex_mem_mem_to_reg_write <= id_ex_mem_to_reg_write;
 
         -- MEM stage
         if (ex_mem_mem_read = '1') then
-            -- perform load 
-            -- TODO: implement loading 4 bytes value from mem
-            -- Constraint: MEM access only return 1 byte each
+            -- perform load: MEM access now return 4 bytes each
+            d_read <= '1';
+            d_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
+            if (d_waitrequest = '0') then
+                mem_wb_read_data <= d_readdata;
+            end if;
         elsif (ex_mem_mem_write = '1') then
             -- perform store
             -- TODO: implement storing 4 bytes value to mem
-            -- Constraint: MEM access only performs 1 byte each
         end if;
         -- latch the control signals and relevant intermediate results
         mem_wb_rd <= ex_mem_rd;
         mem_wb_ALU_output <= ex_mem_ALU_output;
         mem_wb_reg_write <= ex_mem_reg_write; 
+        mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
 
         -- WB stage
         -- Writing back to registers where needed
-        if (mem_wb_reg_write = '1') then
-            regs(to_integer(unsigned(mem_wb_rd))) <= mem_wb_ALU_output;
+        -- protect x0 register 
+        if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000") then
+            if (mem_wb_mem_to_reg_write = '1') then
+                -- load
+                regs(to_integer(unsigned(mem_wb_rd))) <= mem_wb_read_data;
+            else 
+                -- regular R-type operation
+                regs(to_integer(unsigned(mem_wb_rd))) <= mem_wb_ALU_output;
+            end if;
+            
         end if;
     end if;
 
