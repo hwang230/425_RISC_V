@@ -2,17 +2,17 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-entity alu_arithmetic is 
+entity alu_shift is 
     port(
         alu_op: in std_logic_vector(3 downto 0);
         rs2_val, rs1_val: std_logic_vector(31 downto 0);
 
         output: out std_logic_vector(31 downto 0)
     );
-end alu_arithmetic;
+end alu_shift;
 
 -- covers SLL, SRL, SRA
-architecture arch of alu_arithmetic is
+architecture arch of alu_shift is
 
     constant ALU_SLL : std_logic_vector(3 downto 0) := "0110";
     constant ALU_SRL : std_logic_vector(3 downto 0) := "0111";
