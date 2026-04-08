@@ -22,6 +22,14 @@ constant OPCODE_JALR: STD_LOGIC_VECTOR(6 DOWNTO 0) := "1100111";
 constant OPCODE_AUIPC: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0010111";
 constant OPCODE_LUI: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0110111";
 
+-- type of operations
+constant R_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000";
+constant I_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "001";
+constant S_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "010";
+constant B_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "011";
+constant U_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "100";
+constant J_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "101";
+
 -- signals for decoding instructions
 signal opcode: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0000000";
 signal funct7: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0000000";
@@ -118,6 +126,20 @@ signal mem_mem_transfer_done: STD_LOGIC := '0'; -- to indicate if the memory ope
 signal mem_transfer_count: INTEGER range 0 to 3 := 0; -- to indicate how many bytes are sent
 signal mem_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to store the read data
 signal mem_wb_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to latch read data
+
+-- for decode to store the immediate values
+signal imm_I: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
+signal imm_S: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
+signal imm_B: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
+signal imm_U: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
+signal imm_J: STD_LOGIC_VECTOR(19 downto 0) := (others  => '0');
+-- for execute to store the immediate values
+signal id_ex_imm_I: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
+signal id_ex_imm_S: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
+signal id_ex_imm_B: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
+signal id_ex_imm_U: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
+signal id_ex_imm_J: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
+
 begin
 -- data memory
 D_MEM: memory
@@ -222,7 +244,12 @@ begin
         rs1 <= if_id_instr(19 downto 15);
         rs2 <= if_id_instr(24 downto 20);
         rd  <= if_id_instr(11 downto 7);
-
+        imm_I <= if_id_instr(31 downto 20);
+        imm_S <= if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
+        imm_B <= if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
+        imm_U <= if_id_instr(31 downto 12);
+        imm_J <= if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
+        
         -- Latch result from DECODE to EXECUTE
         id_ex_alu_op <= id_alu_op;
         id_ex_rs1_val <= regs(to_integer(unsigned(rs1))); -- 32 bit value stored in rs1
@@ -232,7 +259,12 @@ begin
         id_ex_mem_read <= id_mem_read;
         id_ex_reg_write <= id_reg_write;
         id_ex_mem_to_reg_write <= id_mem_to_reg_write;
-
+        id_ex_imm_I <= imm_I;
+        id_ex_imm_S <= imm_S;
+        id_ex_imm_B <= imm_B;
+        id_ex_imm_U <= imm_U;
+        id_ex_imm_J <= imm_J;
+        
         --------------
         -- EX stage --
         --------------
