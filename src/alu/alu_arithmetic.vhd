@@ -19,6 +19,8 @@ architecture arch of alu_arithmetic is
 
     signal temp : std_logic_vector(32 downto 0);
 
+begin
+
     process(alu_op, rs1_val, rs2_val)
     begin
         case alu_op is

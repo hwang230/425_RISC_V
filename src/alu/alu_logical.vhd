@@ -14,11 +14,13 @@ end alu_arithmetic;
 -- covers AND, ANDI, OR, ORI, XOR, XORI
 architecture arch of alu_arithmetic is
 
-constant ALU_AND : std_logic_vector(3 downto 0) := "0011"; -- cover AND and ANDI
-constant ALU_OR  : std_logic_vector(3 downto 0) := "0100"; -- cover OR and ORI
-constant ALU_XOR : std_logic_vector(3 downto 0) := "0101"; -- cover XORI
+    constant ALU_AND : std_logic_vector(3 downto 0) := "0011"; -- cover AND and ANDI
+    constant ALU_OR  : std_logic_vector(3 downto 0) := "0100"; -- cover OR and ORI
+    constant ALU_XOR : std_logic_vector(3 downto 0) := "0101"; -- cover XORI
 
     signal temp : std_logic_vector(31 downto 0);
+
+begin
 
     process(alu_op, rs1_val, rs2_val)
     begin
