@@ -123,7 +123,6 @@ signal ex_mem_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from ex
 signal mem_wb_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from memory to writeback
 signal mem_wb_mem_to_reg_write: STD_LOGIC := '0'; -- latch the mem_to_reg signal from memory to writeback
 signal mem_mem_transfer_done: STD_LOGIC := '0'; -- to indicate if the memory operations in MEM is completed or not
-signal mem_transfer_count: INTEGER range 0 to 3 := 0; -- to indicate how many bytes are sent
 signal mem_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to store the read data
 signal mem_wb_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to latch read data
 
@@ -139,6 +138,12 @@ signal id_ex_imm_S: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
 signal id_ex_imm_B: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
 signal id_ex_imm_U: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
 signal id_ex_imm_J: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
+
+-- for hazard detection: store the destination register from previous instructions
+signal id_ex_rd_reg1: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in EX stage
+signal ex_mem_rd_reg2: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in MEM stage
+signal id_ex_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in EX stage for hazard detection
+signal ex_mem_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in MEM stage for hazard detection
 
 begin
 -- data memory
@@ -236,7 +241,6 @@ begin
         -- TODO: implement hazard detection
         -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
         -- If hazard, should stall until the instruction completes 
-
         -- assign each var the respective value retrieved from fetch 
         opcode <= if_id_instr(6 downto 0);
         funct3 <= if_id_instr(14 downto 12);
