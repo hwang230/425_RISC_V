@@ -142,8 +142,13 @@ signal id_ex_imm_J: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
 -- for hazard detection: store the destination register from previous instructions
 signal id_ex_rd_reg1: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in EX stage
 signal ex_mem_rd_reg2: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in MEM stage
+signal mem_wb_rd_reg3: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in WB stage
 signal id_ex_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in EX stage for hazard detection
 signal ex_mem_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in MEM stage for hazard detection
+signal mem_wb_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in WB stage for hazard detection
+signal id_ex_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in EX stage for hazard detection
+signal ex_mem_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in MEM stage for hazard detection
+signal mem_wb_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in WB stage for hazard detection
 
 begin
 -- data memory
@@ -229,7 +234,11 @@ begin
         if (start_new_fetch = '1') then
             i_read <= '1';
             i_addr <= pc/4;
+        else 
+            -- stop fetching new instruction to keep the current one in pipeline until dependency resolves
+            i_read <= '0';
         end if;
+        -- in the case of stall, this will not get triggered because i_read stays low
         if (i_waitrequest = '0') then
             if_id_instr <= i_readdata;
             pc <= pc + 4;
@@ -268,7 +277,13 @@ begin
         id_ex_imm_B <= imm_B;
         id_ex_imm_U <= imm_U;
         id_ex_imm_J <= imm_J;
+
+        id_ex_rd_reg1 <= id_ex_rd; -- for hazard detection
+        id_ex_op_type <= opcode(2 downto 0); -- for hazard detection
+        id_ex_reg_write <= id_reg_write; -- for hazard detection
+        -- hazard detection logic
         
+
         --------------
         -- EX stage --
         --------------
@@ -287,6 +302,10 @@ begin
         ex_mem_ALU_output <= ex_ALU_output;
         ex_mem_mem_to_reg_write <= id_ex_mem_to_reg_write;
         ex_mem_rs2_val <= id_ex_rs2_val;
+
+        ex_mem_rd_reg2 <= id_ex_rd_reg1; -- for hazard detection
+        ex_mem_op_type <= id_ex_op_type; -- for hazard detection
+        ex_mem_reg_write <= id_ex_reg_write; -- for hazard detection
 
         ---------------
         -- MEM stage --
@@ -314,7 +333,11 @@ begin
         mem_wb_ALU_output <= ex_mem_ALU_output;
         mem_wb_reg_write <= ex_mem_reg_write; 
         mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
-
+        
+        mem_wb_rd_reg3 <= ex_mem_rd_reg2; -- for hazard detection
+        mem_wb_op_type <= ex_mem_op_type; -- for hazard detection
+        mem_wb_reg_write <= ex_mem_reg_write; -- for hazard detection
+        
         --------------
         -- WB stage --
         --------------
@@ -329,7 +352,6 @@ begin
                 -- regular R-type operation
                 regs(to_integer(unsigned(mem_wb_rd))) <= mem_wb_ALU_output;
             end if;
-            
         end if;
     end if;
 
