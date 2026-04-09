@@ -73,7 +73,7 @@ signal block_out: std_logic_vector(127 downto 0);
 
 
 -- fsm state declaraion
-type state_type is (IDLE, WRITEBACK, REFETCH, COMPLETE, STORE_BLOCK);
+type state_type is (IDLE, WRITEBACK, REFETCH, COMPLETE, STORE_BLOCK, WAIT_COMPLETE);
 signal state: state_type := IDLE;
 
 -- signals to remember the request
@@ -303,6 +303,10 @@ begin
 					-- store block back to storage by triggering with write_block
 					-- turn off the request 
 					write_block <= '1';
+					state <= WAIT_COMPLETE;
+				when WAIT_COMPLETE =>
+					-- cache_storage has now updated. 'hit' will correctly evaluate to '1'.
+					-- Safe to release the testbench and return to IDLE.
 					s_waitrequest <= '0';
 					pending_read <= '0';
 					pending_write <= '0';
