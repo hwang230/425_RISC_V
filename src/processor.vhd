@@ -149,6 +149,9 @@ signal mem_wb_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to st
 signal id_ex_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in EX stage for hazard detection
 signal ex_mem_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in MEM stage for hazard detection
 signal mem_wb_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in WB stage for hazard detection
+signal id_ex_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in EX stage
+signal ex_mem_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in MEM stage
+signal mem_wb_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in WB stage
 
 begin
 -- data memory
@@ -281,8 +284,29 @@ begin
         id_ex_rd_reg1 <= id_ex_rd; -- for hazard detection
         id_ex_op_type <= opcode(2 downto 0); -- for hazard detection
         id_ex_reg_write <= id_reg_write; -- for hazard detection
+
         -- hazard detection logic
-        
+        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and (id_ex_rd_reg1 = rs1 or id_ex_rd_reg1 = rs2)) then
+            -- hazard detected in EX stage
+            id_ex_hazard <= '1';
+            start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
+        else 
+            id_ex_hazard <= '0';
+        end if;
+        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and (ex_mem_rd_reg2 = rs1 or ex_mem_rd_reg2 = rs2)) then
+            -- hazard detected in MEM stage
+            ex_mem_hazard <= '1';
+            start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
+        else
+            ex_mem_hazard <= '0';
+        end if;
+        if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and (mem_wb_rd_reg3 = rs1 or mem_wb_rd_reg3 = rs2)) then
+            -- hazard detected in WB stage
+            mem_wb_hazard <= '1';
+            start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
+        else
+            mem_wb_hazard <= '0';
+        end if;
 
         --------------
         -- EX stage --
@@ -337,11 +361,12 @@ begin
         mem_wb_rd_reg3 <= ex_mem_rd_reg2; -- for hazard detection
         mem_wb_op_type <= ex_mem_op_type; -- for hazard detection
         mem_wb_reg_write <= ex_mem_reg_write; -- for hazard detection
-        
         --------------
         -- WB stage --
         --------------
-        
+
+        -- hazard solving
+
         -- Writing back to registers where needed
         -- protect x0 register 
         if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000") then
