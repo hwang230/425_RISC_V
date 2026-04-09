@@ -21,6 +21,7 @@ constant OPCODE_JAL: STD_LOGIC_VECTOR(6 DOWNTO 0) := "1101111";
 constant OPCODE_JALR: STD_LOGIC_VECTOR(6 DOWNTO 0) := "1100111";
 constant OPCODE_AUIPC: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0010111";
 constant OPCODE_LUI: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0110111";
+constant NOP_INSTR: STD_LOGIC_VECTOR(31 DOWNTO 0) := x"00000013"; -- addi x0, x0, 0
 
 -- type of operations
 constant R_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000";
@@ -146,9 +147,6 @@ signal mem_wb_rd_reg3: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to st
 signal id_ex_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in EX stage for hazard detection
 signal ex_mem_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in MEM stage for hazard detection
 signal mem_wb_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in WB stage for hazard detection
-signal id_ex_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in EX stage for hazard detection
-signal ex_mem_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in MEM stage for hazard detection
-signal mem_wb_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for instruction in WB stage for hazard detection
 signal id_ex_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in EX stage
 signal ex_mem_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in MEM stage
 signal mem_wb_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in WB stage
@@ -196,7 +194,13 @@ begin
 
     end case; 
     -- determine control signal
-    if (opcode = OPCODE_LOAD) then
+    if (opcode = OPCODE_IMM and funct3 = "000" and rs1 = "00000" and rd = "00000" and funct7 = "0000000") then
+        -- NOP instruction
+        id_mem_read <= '0';
+        id_mem_write <= '0';
+        id_reg_write <= '0';
+        id_mem_to_reg_write <= '0';
+    elsif (opcode = OPCODE_LOAD) then
         -- load op
         id_mem_read <= '1';
         id_mem_write <= '0';
@@ -226,25 +230,89 @@ end process;
 
 -- processor pipeline 
 process(clock, reset)
+    variable cur_opcode   : STD_LOGIC_VECTOR(6 downto 0);
+    variable cur_funct3   : STD_LOGIC_VECTOR(2 downto 0);
+    variable cur_funct7   : STD_LOGIC_VECTOR(6 downto 0);
+    variable cur_rs1      : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_rs2      : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_rd       : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_imm_I    : STD_LOGIC_VECTOR(11 downto 0);
+    variable cur_imm_S    : STD_LOGIC_VECTOR(11 downto 0);
+    variable cur_imm_B    : STD_LOGIC_VECTOR(11 downto 0);
+    variable cur_imm_U    : STD_LOGIC_VECTOR(19 downto 0);
+    variable cur_imm_J    : STD_LOGIC_VECTOR(19 downto 0);
+    variable cur_uses_rs1 : STD_LOGIC;
+    variable cur_uses_rs2 : STD_LOGIC;
+    variable stall        : STD_LOGIC;
 begin
+    
     if (reset = '1') then 
         -- reset all intermediate signals here
     elsif (rising_edge(clock)) then
+        -- setting the control signals and decoding the instruction in ID stage
+        cur_opcode := if_id_instr(6 downto 0);
+        cur_funct3 := if_id_instr(14 downto 12);
+        cur_funct7 := if_id_instr(31 downto 25);
+        cur_rs1 := if_id_instr(19 downto 15);
+        cur_rs2 := if_id_instr(24 downto 20);
+        cur_rd := if_id_instr(11 downto 7);
+        cur_imm_I := if_id_instr(31 downto 20);
+        cur_imm_S := if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
+        cur_imm_B := if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
+        cur_imm_U := if_id_instr(31 downto 12);
+        cur_imm_J := if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
+
+        if (cur_opcode = OPCODE_R or cur_opcode = OPCODE_STORE or cur_opcode = OPCODE_B) then
+            cur_uses_rs1 := '1';
+            cur_uses_rs2 := '1';
+        elsif (cur_opcode = OPCODE_IMM or cur_opcode = OPCODE_LOAD or cur_opcode = OPCODE_JALR) then
+            cur_uses_rs1 := '1';
+            cur_uses_rs2 := '0';
+        else
+            cur_uses_rs1 := '0';
+            cur_uses_rs2 := '0';
+        end if;
+
+        stall := '0';
+        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and
+            ((cur_uses_rs1 = '1' and id_ex_rd_reg1 = cur_rs1) or
+             (cur_uses_rs2 = '1' and id_ex_rd_reg1 = cur_rs2))) then
+            id_ex_hazard <= '1';
+            stall := '1';
+        else
+            id_ex_hazard <= '0';
+        end if;
+        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and
+            ((cur_uses_rs1 = '1' and ex_mem_rd_reg2 = cur_rs1) or
+             (cur_uses_rs2 = '1' and ex_mem_rd_reg2 = cur_rs2))) then
+            ex_mem_hazard <= '1';
+            stall := '1';
+        else
+            ex_mem_hazard <= '0';
+        end if;
+        if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and
+            ((cur_uses_rs1 = '1' and mem_wb_rd_reg3 = cur_rs1) or
+             (cur_uses_rs2 = '1' and mem_wb_rd_reg3 = cur_rs2))) then
+            mem_wb_hazard <= '1';
+            stall := '1';
+        else
+            mem_wb_hazard <= '0';
+        end if;
 
         --------------
         -- IF stage --
         --------------
         i_read <= '0';
-        -- TODO: stall if hazard detected in ID 
-        if (start_new_fetch = '1') then
+        if (stall = '0') then
             i_read <= '1';
             i_addr <= pc/4;
         else 
             -- stop fetching new instruction to keep the current one in pipeline until dependency resolves
+            -- redundant logic but just for code clarity
             i_read <= '0';
         end if;
         -- in the case of stall, this will not get triggered because i_read stays low
-        if (i_waitrequest = '0') then
+        if (stall = '0' and i_waitrequest = '0') then
             if_id_instr <= i_readdata;
             pc <= pc + 4;
         end if;
@@ -252,79 +320,61 @@ begin
         --------------
         -- ID stage --
         -------------- 
-        -- TODO: implement hazard detection
-        -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
         -- If hazard, should stall until the instruction completes 
         start_new_fetch <= '1'; -- default: keep fetching unless a hazard below forces a stall
 
         -- assign each var the respective value retrieved from fetch 
-        opcode <= if_id_instr(6 downto 0);
-        funct3 <= if_id_instr(14 downto 12);
-        funct7 <= if_id_instr(31 downto 25);
-        rs1 <= if_id_instr(19 downto 15);
-        rs2 <= if_id_instr(24 downto 20);
-        rd  <= if_id_instr(11 downto 7);
-        imm_I <= if_id_instr(31 downto 20);
-        imm_S <= if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
-        imm_B <= if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
-        imm_U <= if_id_instr(31 downto 12);
-        imm_J <= if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
-
-        -- determine which source registers are actually consumed by this instruction
-        if (opcode = OPCODE_R or opcode = OPCODE_STORE or opcode = OPCODE_B) then
-            uses_rs1 <= '1';
-            uses_rs2 <= '1';
-        elsif (opcode = OPCODE_IMM or opcode = OPCODE_LOAD or opcode = OPCODE_JALR) then
-            uses_rs1 <= '1';
-            uses_rs2 <= '0';
-        else
-            uses_rs1 <= '0';
-            uses_rs2 <= '0';
-        end if;
+        -- if stall occurs, if_id_instr will not get updated and the same instruction will
+        -- stay in decode until hazard resolved
+        opcode <= cur_opcode;
+        funct3 <= cur_funct3;
+        funct7 <= cur_funct7;
+        rs1 <= cur_rs1;
+        rs2 <= cur_rs2;
+        rd  <= cur_rd;
+        imm_I <= cur_imm_I;
+        imm_S <= cur_imm_S;
+        imm_B <= cur_imm_B;
+        imm_U <= cur_imm_U;
+        imm_J <= cur_imm_J;
+        uses_rs1 <= cur_uses_rs1;
+        uses_rs2 <= cur_uses_rs2;
         
         -- Latch result from DECODE to EXECUTE
-        id_ex_alu_op <= id_alu_op;
-        id_ex_rs1_val <= regs(to_integer(unsigned(rs1))); -- 32 bit value stored in rs1
-        id_ex_rs2_val <= regs(to_integer(unsigned(rs2))); -- 32 bit value stored in rs2
-        id_ex_rd <= rd;
-        id_ex_mem_write <= id_mem_write;
-        id_ex_mem_read <= id_mem_read;
-        id_ex_reg_write <= id_reg_write;
-        id_ex_mem_to_reg_write <= id_mem_to_reg_write;
-        id_ex_imm_I <= imm_I;
-        id_ex_imm_S <= imm_S;
-        id_ex_imm_B <= imm_B;
-        id_ex_imm_U <= imm_U;
-        id_ex_imm_J <= imm_J;
-
-        id_ex_rd_reg1 <= id_ex_rd; -- for hazard detection
-        id_ex_op_type <= opcode(2 downto 0); -- for hazard detection
-        id_ex_reg_write <= id_reg_write; -- for hazard detection
-
-        -- hazard detection logic
-        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and ((uses_rs1 = '1' and id_ex_rd_reg1 = rs1) 
-        or(uses_rs2 = '1' and id_ex_rd_reg1 = rs2))) then
-            -- hazard detected in EX stage
-            id_ex_hazard <= '1';
+        if (stall = '1') then
             start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
-        else 
-            id_ex_hazard <= '0';
-        end if;
-        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and ((uses_rs1 = '1' and ex_mem_rd_reg2 = rs1) 
-        or (uses_rs2 = '1' and ex_mem_rd_reg2 = rs2))) then
-            -- hazard detected in MEM stage
-            ex_mem_hazard <= '1';
-            start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
+            id_ex_alu_op <= "0000";
+            id_ex_rs1_val <= (others => '0');
+            id_ex_rs2_val <= (others => '0');
+            id_ex_rd <= "00000";
+            id_ex_mem_write <= '0';
+            id_ex_mem_read <= '0';
+            id_ex_reg_write <= '0';
+            id_ex_mem_to_reg_write <= '0';
+            id_ex_imm_I <= (others => '0');
+            id_ex_imm_S <= (others => '0');
+            id_ex_imm_B <= (others => '0');
+            id_ex_imm_U <= (others => '0');
+            id_ex_imm_J <= (others => '0');
+            id_ex_rd_reg1 <= (others => '0'); -- bubble should not appear as a writer next cycle
+            id_ex_op_type <= (others => '0');
         else
-            ex_mem_hazard <= '0';
-        end if;
-        if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and ((uses_rs1 = '1' and mem_wb_rd_reg3 = rs1) 
-        or (uses_rs2 = '1' and mem_wb_rd_reg3 = rs2))) then
-            -- hazard detected in WB stage
-            mem_wb_hazard <= '1';
-            start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
-        else
-            mem_wb_hazard <= '0';
+            start_new_fetch <= '1'; -- default: keep fetching unless a hazard below forces a stall
+            id_ex_alu_op <= id_alu_op;
+            id_ex_rs1_val <= regs(to_integer(unsigned(cur_rs1))); -- 32 bit value stored in rs1
+            id_ex_rs2_val <= regs(to_integer(unsigned(cur_rs2))); -- 32 bit value stored in rs2
+            id_ex_rd <= cur_rd;
+            id_ex_mem_write <= id_mem_write;
+            id_ex_mem_read <= id_mem_read;
+            id_ex_reg_write <= id_reg_write;
+            id_ex_mem_to_reg_write <= id_mem_to_reg_write;
+            id_ex_imm_I <= cur_imm_I;
+            id_ex_imm_S <= cur_imm_S;
+            id_ex_imm_B <= cur_imm_B;
+            id_ex_imm_U <= cur_imm_U;
+            id_ex_imm_J <= cur_imm_J;
+            id_ex_rd_reg1 <= cur_rd; -- for hazard detection
+            id_ex_op_type <= cur_opcode(2 downto 0); -- for hazard detection
         end if;
 
         --------------
@@ -353,7 +403,6 @@ begin
         ---------------
         -- MEM stage --
         ---------------
-
         -- turn off the data mem signals before then turn it on afterwards if necessary
         d_write <= '0';
         d_read <= '0';
@@ -383,9 +432,6 @@ begin
         --------------
         -- WB stage --
         --------------
-
-        -- hazard solving
-
         -- Writing back to registers where needed
         -- protect x0 register 
         if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000") then
