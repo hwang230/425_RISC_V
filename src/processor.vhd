@@ -152,6 +152,8 @@ signal mem_wb_reg_write: STD_LOGIC := '0'; -- to store the reg_write signal for 
 signal id_ex_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in EX stage
 signal ex_mem_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in MEM stage
 signal mem_wb_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in WB stage
+signal uses_rs1: STD_LOGIC := '0'; -- whether current decoded instruction reads rs1
+signal uses_rs2: STD_LOGIC := '0'; -- whether current decoded instruction reads rs2
 
 begin
 -- data memory
@@ -253,6 +255,8 @@ begin
         -- TODO: implement hazard detection
         -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
         -- If hazard, should stall until the instruction completes 
+        start_new_fetch <= '1'; -- default: keep fetching unless a hazard below forces a stall
+
         -- assign each var the respective value retrieved from fetch 
         opcode <= if_id_instr(6 downto 0);
         funct3 <= if_id_instr(14 downto 12);
@@ -265,6 +269,18 @@ begin
         imm_B <= if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
         imm_U <= if_id_instr(31 downto 12);
         imm_J <= if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
+
+        -- determine which source registers are actually consumed by this instruction
+        if (opcode = OPCODE_R or opcode = OPCODE_STORE or opcode = OPCODE_B) then
+            uses_rs1 <= '1';
+            uses_rs2 <= '1';
+        elsif (opcode = OPCODE_IMM or opcode = OPCODE_LOAD or opcode = OPCODE_JALR) then
+            uses_rs1 <= '1';
+            uses_rs2 <= '0';
+        else
+            uses_rs1 <= '0';
+            uses_rs2 <= '0';
+        end if;
         
         -- Latch result from DECODE to EXECUTE
         id_ex_alu_op <= id_alu_op;
@@ -286,21 +302,24 @@ begin
         id_ex_reg_write <= id_reg_write; -- for hazard detection
 
         -- hazard detection logic
-        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and (id_ex_rd_reg1 = rs1 or id_ex_rd_reg1 = rs2)) then
+        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and ((uses_rs1 = '1' and id_ex_rd_reg1 = rs1) 
+        or(uses_rs2 = '1' and id_ex_rd_reg1 = rs2))) then
             -- hazard detected in EX stage
             id_ex_hazard <= '1';
             start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
         else 
             id_ex_hazard <= '0';
         end if;
-        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and (ex_mem_rd_reg2 = rs1 or ex_mem_rd_reg2 = rs2)) then
+        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and ((uses_rs1 = '1' and ex_mem_rd_reg2 = rs1) 
+        or (uses_rs2 = '1' and ex_mem_rd_reg2 = rs2))) then
             -- hazard detected in MEM stage
             ex_mem_hazard <= '1';
             start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
         else
             ex_mem_hazard <= '0';
         end if;
-        if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and (mem_wb_rd_reg3 = rs1 or mem_wb_rd_reg3 = rs2)) then
+        if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and ((uses_rs1 = '1' and mem_wb_rd_reg3 = rs1) 
+        or (uses_rs2 = '1' and mem_wb_rd_reg3 = rs2))) then
             -- hazard detected in WB stage
             mem_wb_hazard <= '1';
             start_new_fetch <= '0'; -- stall the next instruction from being fetched until the hazard is resolved
