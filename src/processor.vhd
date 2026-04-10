@@ -37,6 +37,7 @@ signal funct3: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000";
 signal rs2: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
 signal rs1: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
 signal rd: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
+signal opcode_type: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000"; -- for ALU
 
 -- instructions encoding
 constant ALU_ADD : std_logic_vector(3 downto 0) := "0000"; -- cover ADD and ADDI
@@ -174,10 +175,120 @@ port map(
 process(opcode, funct3, funct7) 
 begin
     -- reset to default
-    id_alu_op <= "0000";
+    id_alu_op <= ALU_ADD;
+    id_mem_read <= '0';
+    id_mem_write <= '0';
+    id_reg_write <= '0';
+    id_mem_to_reg_write <= '0';
 
     -- determine which process 
     case opcode is
+        when OPCODE_R =>
+            opcode_type <= R_TYPE;
+            if funct7 = "0000001" and funct3 = "000" then
+                id_alu_op <= ALU_MUL; -- mul
+            else
+                case funct3 is -- specific op
+                    when "000" => -- sub or add
+                        if funct7 = "0100000" then
+                            id_alu_op <= ALU_SUB;
+                        else
+                            id_alu_op <= ALU_ADD;
+                        end if;
+                    when "100" => -- xor
+                        id_alu_op <= ALU_XOR;
+                    when "110" => -- or
+                        id_alu_op <= ALU_OR;
+                    when "111" => -- and
+                        id_alu_op <= ALU_AND;
+                    when "001" => -- shift left logical
+                        id_alu_op <= ALU_SLL;
+                    when "010" => -- set less than
+                        id_alu_op <= ALU_SLT;
+                    when "011" => -- set less than (unsigned)
+                        id_alu_op <= ALU_SLTU;
+                    when "101" => -- shift right logical or arith
+                        if funct7 = "0100000" then
+                            id_alu_op <= ALU_SRA;
+                        else
+                            id_alu_op <= ALU_SRL;
+                        end if;
+                    when others => 
+                        id_alu_op <= ALU_ADD; -- safety
+                end case;
+            end if;
+        
+        when OPCODE_IMM =>
+            opcode_type <= I_TYPE;
+            case funct3 is
+                when "000" => -- add imm
+                    id_alu_op <= ALU_ADD;
+                when "100" => -- xor imm
+                    id_alu_op <= ALU_XOR;
+                when "110" => -- or imm
+                    id_alu_op <= ALU_OR;
+                when "111" => -- and imm
+                    id_alu_op <= ALU_AND;
+                when "001" => -- shift left logical imm
+                    id_alu_op <= ALU_SLL;
+                when "010" => -- set less than imm
+                    id_alu_op <= ALU_SLT;
+                when "011" => -- set less than imm (unsigned)
+                    id_alu_op <= ALU_SLT;
+                when "101" => -- srl imm or sra imm
+                    if funct7 = "010000" then
+                        id_alu_op <= ALU_SRA;
+                    else
+                        id_alu_op <= ALU_SRL;
+                    end if;
+                when others =>
+                    id_alu_op <= ALU_ADD;
+            end case;
+        
+        when OPCODE_LOAD =>
+            opcode_type <= I_TYPE;
+            id_alu_op <= ALU_ADD;
+
+        when OPCODE_STORE =>
+            opcode_type <= S_TYPE;
+            id_alu_op <= ALU_ADD;
+        
+        when OPCODE_B =>
+            opcode_type <= B_TYPE;
+            case funct3 is
+                    when "000" => -- branch equal
+                        id_alu_op <= ALU_BEQ;
+                    when "001" => -- branch not equal
+                        id_alu_op <= ALU_BNE;
+                    when "100" => -- branch less than
+                        id_alu_op <= ALU_BLT;
+                    when "101" => -- branch greater than
+                        id_alu_op <= ALU_BGE;
+                    when "110" => -- branch less than
+                        id_alu_op <= ALU_BLT;
+                    when "111" => -- branch greater or equal
+                        id_alu_op <= ALU_BGE;
+                    when others =>
+                        id_alu_op <= ALU_BEQ;
+            end case;
+
+        when OPCODE_JAL =>
+            opcode_type <= J_TYPE;
+            id_alu_op <= ALU_ADD; 
+
+        when OPCODE_JALR =>
+            opcode_type <= I_TYPE;
+            id_alu_op <= ALU_ADD; 
+
+        when OPCODE_LUI | OPCODE_AUIPC =>
+            opcode_type <= U_TYPE;
+            id_alu_op <= ALU_ADD;
+
+        when others =>
+            opcode_type <= R_TYPE;
+            id_alu_op <= ALU_ADD;
+        end case;
+        
 
     end case; 
     -- determine control signal
