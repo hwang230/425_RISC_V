@@ -25,12 +25,12 @@ begin
     begin
         case alu_op is
             when ALU_ADD =>
-                temp <= std_logic_vector(resize(signed(rs1_val, 33)) + resize(signed(rs2_val, 33)));
+                temp <= std_logic_vector(resize(signed(rs1_val), 33) + resize(signed(rs2_val), 33));
             when ALU_SUB =>
-                temp <= std_logic_vector(resize(signed(rs1_val, 33)) - resize(signed(rs2_val, 33)));
+                temp <= std_logic_vector(resize(signed(rs1_val), 33) - resize(signed(rs2_val), 33));
             when others =>
                 temp <= (others => '0');
         end case;
     end process;
-    output <= std_logic_vector(resize(temp, 32));
+    output <= temp(31 downto 0);
 end arch;
