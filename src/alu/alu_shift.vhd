@@ -5,7 +5,7 @@ use ieee.numeric_std.all;
 entity alu_shift is 
     port(
         alu_op: in std_logic_vector(3 downto 0);
-        rs2_val, rs1_val: std_logic_vector(31 downto 0);
+        rs1_val, rs2_val: std_logic_vector(31 downto 0);
 
         output: out std_logic_vector(31 downto 0)
     );
