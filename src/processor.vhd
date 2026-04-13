@@ -98,6 +98,9 @@ signal if_id_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latc
 
 -- intermediate signals for pipeline control
 signal id_ex_alu_op: STD_LOGIC_VECTOR(3 downto 0); -- latch the operation
+signal id_ex_opcode: STD_LOGIC_VECTOR(6 downto 0); -- latch the opcode
+signal if_id_pc : integer := 0;
+signal id_ex_pc : integer := 0;
 signal id_ex_rs2_val, id_ex_rs1_val: STD_LOGIC_VECTOR(31 downto 0); -- latch the values from registrs
 signal id_ex_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the destination register
 signal id_ex_mem_read: STD_LOGIC := '0'; -- to indicate if instruction requires access to data memory (latched from decode)
@@ -167,6 +170,35 @@ port map(
     memread => i_read,
     readdata => i_readdata,
     waitrequest => i_waitrequest
+);
+
+signal alu_imm12 : std_logic_vector(11 downto 0);
+signal alu_imm20 : std_logic_vector(19 downto 0);
+
+with id_ex_op_type select
+alu_imm12 <= 
+    id_ex_imm_I when I_TYPE,
+    id_ex_imm_S when S_TYPE,
+    id_ex_imm_B when B_TYPE,
+    (others => '0') when others;
+
+with id_ex_op_type select
+alu_imm20 <=
+    id_ex_imm_U when U_TYPE,
+    id_ex_imm_J when J_TYPE,
+    (others => '0') when others;
+
+ALU: alu
+port map(
+    alu_op => id_ex_alu_op,
+    opcode_type => id_ex_op_type,
+    opcode => id_ex_opcode,
+    rs1_val => id_ex_rs1_val,
+    rs2_val => id_ex_rs2_val,
+    imm12 => alu_imm12,
+    imm20 => alu_imm20,
+    pc => id_ex_pc,
+    output => ex_ALU_output
 );
 
 -- processor pipeline 
@@ -372,6 +404,7 @@ begin
 
         if (stall = '0' and i_waitrequest = '0') then
             if_id_instr <= i_readdata;
+            if_id_pc <= pc;
             pc <= pc + 4;
         end if;
 
@@ -403,6 +436,7 @@ begin
         -- when stall occurs, insert NOPs
         if (stall = '1') then
             id_ex_alu_op <= "0000";
+            id_ex_opcode <= "0000000";
             id_ex_rs1_val <= (others => '0');
             id_ex_rs2_val <= (others => '0');
             id_ex_rd <= "00000";
@@ -419,6 +453,8 @@ begin
             id_ex_op_type <= (others => '0');
         else
             id_ex_alu_op <= cur_id_alu_op;
+            id_ex_opcode <= cur_opcode;
+            id_ex_pc <= if_id_pc;
             id_ex_rs1_val <= regs(to_integer(unsigned(cur_rs1))); -- 32 bit value stored in rs1
             id_ex_rs2_val <= regs(to_integer(unsigned(cur_rs2))); -- 32 bit value stored in rs2
             id_ex_rd <= cur_rd;
