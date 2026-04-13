@@ -20,6 +20,8 @@ begin
 
     process
     begin
+        report "starting branch component tests" severity warning;
+
         -- Test BEQ: Equal values -> Output should be 1
         alu_op <= "1010";
         rs1_val <= std_logic_vector(to_signed(50, 32));
@@ -65,9 +67,10 @@ begin
         rs1_val <= std_logic_vector(to_signed(50, 32));
         rs2_val <= std_logic_vector(to_signed(50, 32));
         wait for 10 ns;
-        assert output = (others => '0') 
+        assert output = x"00000000" 
             report "Invalid op test failed" severity error;
 
+        report "branch component testing done" severity warning;
         wait;
     end process;
 end behavior;

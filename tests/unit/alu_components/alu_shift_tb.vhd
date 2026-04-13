@@ -20,6 +20,8 @@ begin
 
     process
     begin
+        report "starting shift component testing" severity warning;
+
         -- Test SLL: Shift left logical by 4 (0x00000001 << 4 = 0x00000010)
         alu_op <= "0110";
         rs1_val <= x"00000001";
@@ -49,9 +51,10 @@ begin
         rs1_val <= x"F0000000";
         rs2_val <= x"00000004";
         wait for 10 ns;
-        assert output = (others => '0') 
+        assert output = x"00000000" 
             report "Invalid op test failed" severity error;
 
+        report "shift component testing done" severity warning;
         wait;
     end process;
 end behavior;

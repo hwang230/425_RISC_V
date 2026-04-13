@@ -20,6 +20,8 @@ begin
 
     process
     begin
+        report "starting multiply component testing" severity warning;
+
         -- Test MUL: 5 * 6 = 30
         alu_op <= "0010";
         rs1_val <= std_logic_vector(to_signed(5, 32));
@@ -49,9 +51,10 @@ begin
         rs1_val <= std_logic_vector(to_signed(5, 32));
         rs2_val <= std_logic_vector(to_signed(6, 32));
         wait for 10 ns;
-        assert output = (others => '0') 
+        assert to_integer(signed(output)) = 0 
             report "Invalid op test failed" severity error;
 
+        report "multiply component testing done" severity warning;
         wait;
     end process;
 end behavior;

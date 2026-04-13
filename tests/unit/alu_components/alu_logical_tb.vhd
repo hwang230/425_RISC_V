@@ -20,6 +20,8 @@ begin
 
     process
     begin
+        report "starting logical component tests" severity warning;
+
         -- Test AND: 0xAAAAAAAA & 0x55555555 = 0x00000000
         alu_op <= "0011";
         rs1_val <= x"AAAAAAAA";
@@ -49,9 +51,10 @@ begin
         rs1_val <= x"AAAAAAAA";
         rs2_val <= x"55555555";
         wait for 10 ns;
-        assert output = (others => '0') 
+        assert output = x"00000000"
             report "Invalid op test failed" severity error;
 
+        report "logical component testing done" severity warning;
         wait;
     end process;
 end behavior;

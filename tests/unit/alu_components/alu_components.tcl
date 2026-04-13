@@ -3,10 +3,13 @@
 # ====================================================================
 
 # 1. SET YOUR VARIABLES HERE
+# Define where your source files live relative to this script
+set SRC_DIR "../../../src/alu"
+
 # Change these three variables to match the unit you want to test.
-set DESIGN_FILE "alu_arithmetic.vhd"
-set TB_FILE     "alu_arithmetic_tb.vhd"
-set TB_ENTITY   "alu_arithmetic_tb"
+set DESIGN_FILE "alu_shift.vhd"
+set TB_FILE     "alu_shift_tb.vhd"
+set TB_ENTITY   "alu_shift_tb"
 
 # 2. CREATE WORKING LIBRARY
 # This creates a virtual folder called "work" where the compiled files go.
@@ -18,7 +21,7 @@ vmap work work
 
 # 3. COMPILE THE VHDL FILES
 echo "Compiling Design..."
-vcom -work work $DESIGN_FILE
+vcom -work work $SRC_DIR/$DESIGN_FILE
 
 echo "Compiling Testbench..."
 vcom -work work $TB_FILE
@@ -30,5 +33,4 @@ vsim -c work.$TB_ENTITY
 
 # 5. EXECUTE AND QUIT
 # Run it for enough time to process your wait statements, then exit.
-run 100 ns
-quit
+run 100 ms

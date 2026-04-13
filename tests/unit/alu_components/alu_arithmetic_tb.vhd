@@ -20,6 +20,8 @@ begin
 
     process
     begin
+        report "starting arithmetic component tests" severity warning;
+
         -- Test ADD: 15 + 10 = 25
         alu_op <= "0000";
         rs1_val <= std_logic_vector(to_signed(15, 32));
@@ -49,8 +51,9 @@ begin
         rs1_val <= std_logic_vector(to_signed(15, 32));
         rs2_val <= std_logic_vector(to_signed(10, 32));
         wait for 10 ns;
-        assert output = (others => '0') report "Invalid op test failed" severity error;
+        assert to_integer(signed(output)) = 0 report "Invalid op test failed" severity error;
 
+        report "arithmetic component testing done" severity warning;
         wait;
     end process;
 end behavior;
