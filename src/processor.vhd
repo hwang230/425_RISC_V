@@ -156,6 +156,7 @@ signal alu_imm20 : std_logic_vector(19 downto 0);
 -- signals for calculating branch and jump addresses
 signal branch_taken : std_logic;
 signal jump_taken : std_logic;
+signal flush_taken : std_logic;
 signal id_ex_target_imm : signed(31 downto 0);
 signal target_address : std_logic_vector(31 downto 0);
 
@@ -207,6 +208,7 @@ alu_imm20 <=
 
 branch_taken <= '1' when (id_ex_op_type = B_TYPE and ex_ALU_output(0) = '1') else '0';
 jump_taken <= '1' when (id_ex_op_type = J_TYPE or (id_ex_op_type = I_TYPE and id_ex_opcode = OPCODE_JALR)) else '0';
+flush_taken <= '1' when (branch_taken = '1' or jump_taken = '1') else '0';
 
 -- Calculate the Target Address
 -- JALR: target = rs1 + imm (already the ALU result)
@@ -215,12 +217,8 @@ id_ex_target_imm <= resize(signed(id_ex_imm_B & '0'), 32) when (id_ex_op_type = 
                     resize(signed(id_ex_imm_J & '0'), 32) when (id_ex_op_type = J_TYPE) else
                     to_signed(0, 32);
 
-target_address <= std_logic_vector(
-                    (signed(id_ex_rs1_val) + resize(signed(id_ex_imm_I), 32))
-                    and to_signed(-2, 32)
-                  )
-                  when (id_ex_op_type = I_TYPE and id_ex_opcode = OPCODE_JALR) else
-                  std_logic_vector(to_signed(id_ex_pc, 32) + id_ex_target_imm);
+target_address <= std_logic_vector((signed(id_ex_rs1_val) + resize(signed(id_ex_imm_I), 32)) and to_signed(-2, 32))
+                  when (id_ex_op_type = I_TYPE and id_ex_opcode = OPCODE_JALR) else std_logic_vector(to_signed(id_ex_pc, 32) + id_ex_target_imm);
 ALU: entity work.alu
 port map(
     alu_op => id_ex_alu_op,
@@ -260,6 +258,7 @@ process(clock, reset)
 begin
     if (reset = '1') then 
         -- reset all intermediate signals here
+        regs <= (others => (others => '0'));
         pc <= 0;
         if_id_instr <= (others => '0');
         if_id_pc <= 0;
@@ -464,7 +463,7 @@ begin
         i_read <= '0';
 
         -- Control transfer has priority
-        if (branch_taken = '1' or jump_taken = '1') then
+        if (flush_taken = '1') then
             pc <= to_integer(unsigned(target_address));
 
             -- squash younger fetched instruction
@@ -519,9 +518,10 @@ begin
 
         -- Latch result from DECODE to EXECUTE
         -- when stall occurs, insert NOPs
-        if (stall = '1') then
+        if (stall = '1' or flush_taken = '1') then
             id_ex_alu_op <= "0000";
             id_ex_opcode <= "0000000";
+            id_ex_pc <= 0;
             id_ex_rs1_val <= (others => '0');
             id_ex_rs2_val <= (others => '0');
             id_ex_rd <= "00000";
