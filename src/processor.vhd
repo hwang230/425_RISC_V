@@ -73,9 +73,9 @@ PORT (
 end component;
 
 -- memory signals for data memory
-constant ram_size_: integer := 32768/4; -- to define the memory size 
+constant ram_size_new: integer := 32768/4; -- to define the memory size 
 signal d_writedata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0');
-signal d_addr: INTEGER RANGE 0 TO ram_size_-1 := 0;
+signal d_addr: INTEGER RANGE 0 TO ram_size_new-1 := 0;
 signal d_write: STD_LOGIC := '0';
 signal d_read: STD_LOGIC := '0';
 signal d_readdata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0');
@@ -83,7 +83,7 @@ signal d_waitrequest: STD_LOGIC := '0';
 
 -- memory signals for instruction memory
 signal i_writedata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0'); -- won't be needed
-signal i_addr: INTEGER RANGE 0 TO ram_size_-1 := 0;
+signal i_addr: INTEGER RANGE 0 TO ram_size_new-1 := 0;
 signal i_write: STD_LOGIC := '0'; -- won't be needed
 signal i_read: STD_LOGIC := '0';
 signal i_readdata: STD_LOGIC_VECTOR (31 DOWNTO 0) := (others => '0');
@@ -154,7 +154,7 @@ signal alu_imm20 : std_logic_vector(19 downto 0);
 -- signals for calculating branch and jump addresses
 signal branch_taken : std_logic;
 signal jump_taken : std_logic;
-signal id_ex_target_imm : std_logic_vector(31 downto 0);
+signal id_ex_target_imm : signed(31 downto 0);
 signal target_address : std_logic_vector(31 downto 0);
 
 begin
@@ -203,13 +203,17 @@ jump_taken <= '1' when (id_ex_op_type = J_TYPE or (id_ex_op_type = I_TYPE and id
 -- Calculate the Target Address
 -- JALR: target = rs1 + imm (already the ALU result)
 -- JAL, Branches: target = PC + Immediate
-id_ex_target_imm <= (31 downto 13 => id_ex_imm_B(11)) & id_ex_imm_B & '0' when (id_ex_op_type = B_TYPE) else
-                    (31 downto 21 => id_ex_imm_J(19)) & id_ex_imm_J & '0' when (id_ex_op_type = J_TYPE) else
-                    (others => '0');
-target_address <= std_logic_vector(signed(id_ex_rs1_val) + signed((31 downto 12 => id_ex_imm_I(11)) & id_ex_imm_I)) 
+id_ex_target_imm <= resize(signed(id_ex_imm_B & '0'), 32) when (id_ex_op_type = B_TYPE) else
+                    resize(signed(id_ex_imm_J & '0'), 32) when (id_ex_op_type = J_TYPE) else
+                    to_signed(0, 32);
+
+target_address <= std_logic_vector(
+                    (signed(id_ex_rs1_val) + resize(signed(id_ex_imm_I), 32))
+                    and to_signed(-2, 32)
+                  )
                   when (id_ex_op_type = I_TYPE and id_ex_opcode = OPCODE_JALR) else
-                  std_logic_vector(to_signed(id_ex_pc, 32) + signed(id_ex_target_imm));
-ALU: alu
+                  std_logic_vector(to_signed(id_ex_pc, 32) + id_ex_target_imm);
+ALU: entity work.alu
 port map(
     alu_op => id_ex_alu_op,
     opcode_type => id_ex_op_type,
@@ -499,15 +503,10 @@ begin
             id_ex_rd_reg1 <= cur_rd; -- for hazard detection
             id_ex_op_type <= cur_opcode_type; -- decoded instruction type for later stages
         end if;
+
         --------------
         -- EX stage --
         --------------
-
-        -- TODO
-        -- Input: id_ex_alu_op, id_ex_rs1, id_ex_rs2, id_ex_rd
-        -- Output: ex_ALU_output
-        -- Task: create ALU module that performs the operation
-        
         -- latch the control signals for mem stage from decode 
         -- latch the control signals and relevant intermediate results
         ex_mem_mem_read <= id_ex_mem_read;
