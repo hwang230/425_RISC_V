@@ -18,11 +18,21 @@ proc DumpDataMemory {outfile} {
     close $fh
 }
 
+# Clear the instruction memory before loading a new program
+proc ClearInstructionMemory {} {
+    for {set i 0} {$i < 8192} {incr i} {
+        set path sim:/processor_tb/dut/I_MEM/ram_block\\($i\\)
+        force -deposit $path 2#00000000000000000000000000000000 0
+    }
+}
+
 # Load the program instructions from a text file into the instruction memory
 proc LoadProgram {infile} {
     if {![file exists $infile]} {
         error "Program file '$infile' not found"
     }
+
+    ClearInstructionMemory
 
     set fh [open $infile r]
     set addr 0
@@ -63,9 +73,20 @@ vcom ./src/processor.vhd
 vcom ./tests/processor_tb.vhd
 
 vsim work.processor_tb
-LoadProgram program.txt
-run -all
 
-# After simulation, write the register file and data memory contents to text files
-DumpRegisterFile register_file.txt
-DumpDataMemory memory.txt
+set program_files [lsort [glob -nocomplain program*.txt]]
+if {[llength $program_files] == 0} {
+    error "No program files matching 'program*.txt' were found"
+}
+
+foreach program_file $program_files {
+    set program_name [file rootname [file tail $program_file]]
+
+    echo "Running $program_file"
+    restart -f
+    LoadProgram $program_file
+    run -all
+
+    DumpRegisterFile "${program_name}_register_file.txt"
+    DumpDataMemory "${program_name}_memory.txt"
+}

@@ -52,7 +52,7 @@ begin
         wait until rising_edge(clock);
     end loop;
 
-    report "Simulation Completed: The output files are memory.txt and register_file.txt";
+    report "Simulation completed. Dump files are written by testbench.tcl for each program*.txt input.";
     stop;
 end process;
 
