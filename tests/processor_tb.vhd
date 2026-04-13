@@ -1,6 +1,5 @@
 library ieee;
 use ieee.std_logic_1164.all;
-use std.env.all;
 
 entity processor_tb is
 end processor_tb;
@@ -53,7 +52,7 @@ begin
     end loop;
 
     report "Simulation completed. Dump files are written by testbench.tcl for each program*.txt input.";
-    stop;
+    wait;
 end process;
 
 end behavior;

@@ -1,35 +1,53 @@
-# Dump the contents of the register file to a text file
+proc ResolveArrayBase {root leafname} {
+    set matches [find signals ${root}/*]
+    foreach m $matches {
+        if {[string match "*$leafname" $m]} {
+            return $m
+        }
+    }
+    error "Could not find signal '$leafname' under $root"
+}
+
 proc DumpRegisterFile {outfile} {
+    set regs_base [ResolveArrayBase sim:/processor_tb/dut regs]
+    puts "Register array found at: $regs_base"
+
     set fh [open $outfile w]
     for {set i 0} {$i < 32} {incr i} {
-        set value [string trim [examine -radix bin sim:/processor_tb/dut/regs\\($i\\)]]
+        set path "${regs_base}($i)"
+        set value [string trim [examine -radix bin $path]]
         puts $fh $value
     }
     close $fh
 }
 
-# Dump the contents of the data memory to a text file
 proc DumpDataMemory {outfile} {
+    set mem_base [ResolveArrayBase sim:/processor_tb/dut/D_MEM ram_block]
+    puts "Data memory array found at: $mem_base"
+
     set fh [open $outfile w]
     for {set i 0} {$i < 8192} {incr i} {
-        set value [string trim [examine -radix bin sim:/processor_tb/dut/D_MEM/ram_block\\($i\\)]]
+        set path "${mem_base}($i)"
+        set value [string trim [examine -radix bin $path]]
         puts $fh $value
     }
     close $fh
 }
 
-# Load the program instructions from a text file into the instruction memory
 proc LoadProgram {infile} {
     if {![file exists $infile]} {
         error "Program file '$infile' not found"
     }
 
+    set imem_base [ResolveArrayBase sim:/processor_tb/dut/I_MEM ram_block]
+    puts "Instruction memory array found at: $imem_base"
+
     set fh [open $infile r]
     set addr 0
 
     while {[gets $fh line] >= 0} {
-        regsub {--.*$} $line {} line
-        regsub {//.*$} $line {} line
+        regsub -- {--.*$} $line {} line
+        regsub -- {//.*$} $line {} line
         set line [string trim $line]
 
         if {$line eq ""} {
@@ -41,10 +59,8 @@ proc LoadProgram {infile} {
             error "Invalid instruction format at word $addr: expected 32-bit binary string, got '$line'"
         }
 
-        set word $line
-        set path sim:/processor_tb/dut/I_MEM/ram_block\\($addr\\)
-
-        force -deposit $path 2#$word 0
+        set path "${imem_base}($addr)"
+        force -deposit $path 2#$line 0
         incr addr
     }
 
@@ -69,8 +85,17 @@ vcom ./src/processor.vhd
 vcom ./tests/processor_tb.vhd
 
 vsim work.processor_tb
-LoadProgram program.txt
-run 10000ns
 
-DumpRegisterFile register_file.txt
-DumpDataMemory memory.txt
+puts "Loading program"
+LoadProgram program.txt
+
+puts "Running simulation"
+run 10000 ns
+
+puts "PWD = [pwd]"
+puts "Dumping register file"
+DumpRegisterFile ./register_file.txt
+puts "Dumping data memory"
+DumpDataMemory ./memory.txt
+
+quit -f

@@ -252,6 +252,37 @@ process(clock, reset)
 begin
     if (reset = '1') then 
         -- reset all intermediate signals here
+        pc <= 0;
+        if_id_instr <= (others => '0');
+        if_id_pc <= 0;
+        id_ex_alu_op <= (others => '0');
+        id_ex_opcode <= (others => '0');
+        id_ex_rs1_val <= (others => '0');
+        id_ex_rs2_val <= (others => '0');
+        id_ex_rd <= (others => '0');
+        id_ex_mem_read <= '0';
+        id_ex_mem_write <= '0';
+        id_ex_mem_to_reg_write <= '0';
+        ex_ALU_output <= (others => '0');
+        ex_mem_ALU_output <= (others => '0');
+        ex_mem_mem_read <= '0';
+        ex_mem_mem_write <= '0';
+        ex_mem_rd <= (others => '0');
+        ex_mem_mem_to_reg_write <= '0';
+        ex_mem_rs2_val <= (others => '0');
+        mem_wb_rd <= (others => '0');
+        mem_wb_ALU_output <= (others => '0');
+        id_ex_rd_reg1 <= (others => '0');
+        ex_mem_rd_reg2 <= (others => '0');
+        mem_wb_rd_reg3 <= (others => '0');
+        id_ex_op_type <= (others => '0');
+        ex_mem_op_type <= (others => '0');
+        mem_wb_op_type <= (others => '0');
+        id_ex_hazard <= '0';
+        ex_mem_hazard <= '0';
+        mem_wb_hazard <= '0';
+        uses_rs1 <= '0';
+        uses_rs2 <= '0';
     elsif (rising_edge(clock)) then
         -- setting up the control signals for current instruction
         cur_opcode := if_id_instr(6 downto 0);
