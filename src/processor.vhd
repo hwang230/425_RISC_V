@@ -147,6 +147,16 @@ signal mem_wb_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard dete
 signal uses_rs1: STD_LOGIC := '0'; -- whether current decoded instruction reads rs1
 signal uses_rs2: STD_LOGIC := '0'; -- whether current decoded instruction reads rs2
 
+-- prep immediates to be passed into the alu
+signal alu_imm12 : std_logic_vector(11 downto 0);
+signal alu_imm20 : std_logic_vector(19 downto 0);
+
+-- signals for calculating branch and jump addresses
+signal branch_taken : std_logic;
+signal jump_taken : std_logic;
+signal id_ex_target_imm : std_logic_vector(31 downto 0);
+signal target_address : std_logic_vector(31 downto 0);
+
 begin
 -- data memory
 D_MEM: memory
@@ -172,9 +182,7 @@ port map(
     waitrequest => i_waitrequest
 );
 
-signal alu_imm12 : std_logic_vector(11 downto 0);
-signal alu_imm20 : std_logic_vector(19 downto 0);
-
+-- select immediate value type
 with id_ex_op_type select
 alu_imm12 <= 
     id_ex_imm_I when I_TYPE,
@@ -188,6 +196,19 @@ alu_imm20 <=
     id_ex_imm_J when J_TYPE,
     (others => '0') when others;
 
+
+branch_taken <= '1' when (id_ex_op_type = B_TYPE and ex_ALU_output(0) = '1') else '0';
+jump_taken <= '1' when (id_ex_op_type = J_TYPE or (id_ex_op_type = I_TYPE and id_ex_opcode = OPCODE_JALR)) else '0';
+
+-- Calculate the Target Address
+-- JALR: target = rs1 + imm (already the ALU result)
+-- JAL, Branches: target = PC + Immediate
+id_ex_target_imm <= (31 downto 13 => id_ex_imm_B(11)) & id_ex_imm_B & '0' when (id_ex_op_type = B_TYPE) else
+                    (31 downto 21 => id_ex_imm_J(19)) & id_ex_imm_J & '0' when (id_ex_op_type = J_TYPE) else
+                    (others => '0');
+target_address <= std_logic_vector(signed(id_ex_rs1_val) + signed((31 downto 12 => id_ex_imm_I(11)) & id_ex_imm_I)) 
+                  when (id_ex_op_type = I_TYPE and id_ex_opcode = OPCODE_JALR) else
+                  std_logic_vector(to_signed(id_ex_pc, 32) + signed(id_ex_target_imm));
 ALU: alu
 port map(
     alu_op => id_ex_alu_op,
@@ -403,9 +424,17 @@ begin
         end if;
 
         if (stall = '0' and i_waitrequest = '0') then
-            if_id_instr <= i_readdata;
-            if_id_pc <= pc;
-            pc <= pc + 4;
+            if (reset = '1') then
+                pc <= 0;
+            elsif (branch_taken = '1' or jump_taken = '1') then
+                if_id_instr <= (others => '0');
+                id_ex_op_type <= (others => '0');
+                pc <= to_integer(unsigned(target_address));
+            elsif (stall = '0' and i_waitrequest = '0') then
+                if_id_instr <= i_readdata;
+                if_id_pc <= pc;
+                pc <= pc + 4;
+            end if;
         end if;
 
         --------------
