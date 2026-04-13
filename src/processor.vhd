@@ -30,6 +30,8 @@ constant B_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "011";
 constant U_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "100";
 constant J_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "101";
 
+-- signal for fetch
+signal fetch_pending: std_Logic := '0';
 -- signals for decoding instructions
 signal opcode: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0000000";
 signal opcode_type: STD_LOGIC_VECTOR(2 DOWNTO 0) := (others => '0');
@@ -157,6 +159,12 @@ signal jump_taken : std_logic;
 signal id_ex_target_imm : signed(31 downto 0);
 signal target_address : std_logic_vector(31 downto 0);
 
+-- signal to load from data mem
+signal load_pending       : std_logic := '0';
+signal pending_rd         : std_logic_vector(4 downto 0) := (others => '0');
+signal pending_reg_write  : std_logic := '0';
+signal pending_alu_output : std_logic_vector(31 downto 0) := (others => '0');
+
 begin
 -- data memory
 D_MEM: memory
@@ -263,7 +271,6 @@ begin
         id_ex_mem_read <= '0';
         id_ex_mem_write <= '0';
         id_ex_mem_to_reg_write <= '0';
-        ex_ALU_output <= (others => '0');
         ex_mem_ALU_output <= (others => '0');
         ex_mem_mem_read <= '0';
         ex_mem_mem_write <= '0';
@@ -449,26 +456,40 @@ begin
         --     mem_wb_hazard <= '0';
         -- end if;
 
-        --------------
+               --------------
         -- IF stage --
         --------------
-        i_read <= '0';
-        if (stall = '0') then
-            i_read <= '1';
-            i_addr <= pc/4;
-        end if;
 
-        if (stall = '0' and i_waitrequest = '0') then
-            if (reset = '1') then
-                pc <= 0;
-            elsif (branch_taken = '1' or jump_taken = '1') then
-                if_id_instr <= (others => '0');
-                id_ex_op_type <= (others => '0');
-                pc <= to_integer(unsigned(target_address));
-            elsif (stall = '0' and i_waitrequest = '0') then
+        -- Default: do not issue a new read unless we choose to below
+        i_read <= '0';
+
+        -- Control transfer has priority
+        if (branch_taken = '1' or jump_taken = '1') then
+            pc <= to_integer(unsigned(target_address));
+
+            -- squash younger fetched instruction
+            if_id_instr <= (others => '0');
+            if_id_pc <= 0;
+
+            -- cancel any in-flight fetch bookkeeping
+            fetch_pending <= '0';
+
+        elsif (stall = '0') then
+            if (fetch_pending = '0') then
+                -- Step 1: issue memory read for current PC
+                i_addr <= pc / 4;
+                i_read <= '1';
+                fetch_pending <= '1';
+
+            elsif (i_waitrequest = '0') then
+                -- Step 2: returned instruction is now valid
                 if_id_instr <= i_readdata;
                 if_id_pc <= pc;
+
+                -- advance PC only after instruction is accepted
                 pc <= pc + 4;
+
+                fetch_pending <= '0';
             end if;
         end if;
 
@@ -558,29 +579,37 @@ begin
         -- turn off the data mem signals before then turn it on afterwards if necessary
         d_write <= '0';
         d_read <= '0';
-        if (ex_mem_mem_read = '1') then
-            -- perform load: MEM access now return 4 bytes each
+        if load_pending = '1' then
+            mem_wb_read_data <= d_readdata;
+            mem_wb_rd <= pending_rd;
+            mem_wb_reg_write <= pending_reg_write;
+            mem_wb_mem_to_reg_write <= '1';
+            load_pending <= '0';
+
+        elsif ex_mem_mem_read = '1' then
             d_read <= '1';
             d_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
-            if (d_waitrequest = '0') then
-                mem_wb_read_data <= d_readdata;
-            end if;
-        elsif (ex_mem_mem_write = '1') then
-            -- perform store
+
+            pending_rd <= ex_mem_rd;
+            pending_reg_write <= ex_mem_reg_write;
+            pending_alu_output <= ex_mem_ALU_output;
+            load_pending <= '1';
+
+        elsif ex_mem_mem_write = '1' then
             d_write <= '1';
             d_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
             d_writedata <= ex_mem_rs2_val;
-        end if;
-        -- latch the control signals and relevant intermediate results
 
-        mem_wb_rd <= ex_mem_rd;
-        mem_wb_ALU_output <= ex_mem_ALU_output;
-        mem_wb_reg_write <= ex_mem_reg_write; 
-        mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
-        
-        mem_wb_rd_reg3 <= ex_mem_rd_reg2; -- for hazard detection
-        mem_wb_op_type <= ex_mem_op_type; -- for hazard detection
-        mem_wb_reg_write <= ex_mem_reg_write; -- for hazard detection
+            mem_wb_rd <= ex_mem_rd;
+            mem_wb_ALU_output <= ex_mem_ALU_output;
+            mem_wb_reg_write <= ex_mem_reg_write;
+            mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
+        else
+            mem_wb_rd <= ex_mem_rd;
+            mem_wb_ALU_output <= ex_mem_ALU_output;
+            mem_wb_reg_write <= ex_mem_reg_write;
+            mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
+        end if;
         --------------
         -- WB stage --
         --------------
