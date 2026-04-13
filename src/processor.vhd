@@ -32,6 +32,7 @@ constant J_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "101";
 
 -- signals for decoding instructions
 signal opcode: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0000000";
+signal opcode_type: STD_LOGIC_VECTOR(2 DOWNTO 0) := (others => '0');
 signal funct7: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0000000";
 signal funct3: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000";
 signal rs2: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
@@ -177,6 +178,7 @@ process(clock, reset)
     variable cur_rs1      : STD_LOGIC_VECTOR(4 downto 0);
     variable cur_rs2      : STD_LOGIC_VECTOR(4 downto 0);
     variable cur_rd       : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_opcode_type : STD_LOGIC_VECTOR(2 downto 0);
     variable cur_imm_I    : STD_LOGIC_VECTOR(11 downto 0);
     variable cur_imm_S    : STD_LOGIC_VECTOR(11 downto 0);
     variable cur_imm_B    : STD_LOGIC_VECTOR(11 downto 0);
@@ -201,6 +203,7 @@ begin
         cur_rs1 := if_id_instr(19 downto 15);
         cur_rs2 := if_id_instr(24 downto 20);
         cur_rd := if_id_instr(11 downto 7);
+        cur_opcode_type := (others => '0');
         cur_imm_I := if_id_instr(31 downto 20);
         cur_imm_S := if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
         cur_imm_B := if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
@@ -229,6 +232,7 @@ begin
 
         case cur_opcode is
             when OPCODE_R =>
+                cur_opcode_type := R_TYPE;
                 cur_id_reg_write := '1';
                 if (cur_funct7 = "0000001" and cur_funct3 = "000") then
                     cur_id_alu_op := ALU_MUL;
@@ -262,6 +266,7 @@ begin
                 end if;
 
             when OPCODE_IMM =>
+                cur_opcode_type := I_TYPE;
                 cur_id_reg_write := '1';
                 case cur_funct3 is
                     when "000" =>
@@ -287,16 +292,19 @@ begin
                 end case;
 
             when OPCODE_LOAD =>
+                cur_opcode_type := I_TYPE;
                 cur_id_alu_op := ALU_ADD;
                 cur_id_mem_read := '1';
                 cur_id_reg_write := '1';
                 cur_id_mem_to_reg_write := '1';
 
             when OPCODE_STORE =>
+                cur_opcode_type := S_TYPE;
                 cur_id_alu_op := ALU_ADD;
                 cur_id_mem_write := '1';
 
             when OPCODE_B =>
+                cur_opcode_type := B_TYPE;
                 case cur_funct3 is
                     when "000" =>
                         cur_id_alu_op := ALU_BEQ;
@@ -311,10 +319,18 @@ begin
                 end case;
 
             when OPCODE_JAL | OPCODE_JALR | OPCODE_LUI | OPCODE_AUIPC =>
+                if (cur_opcode = OPCODE_JAL) then
+                    cur_opcode_type := J_TYPE;
+                elsif (cur_opcode = OPCODE_JALR) then
+                    cur_opcode_type := I_TYPE;
+                else
+                    cur_opcode_type := U_TYPE;
+                end if;
                 cur_id_alu_op := ALU_ADD;
                 cur_id_reg_write := '1';
 
             when others =>
+                cur_opcode_type := (others => '0');
                 cur_id_alu_op := ALU_ADD;
         end case;
 
@@ -368,6 +384,7 @@ begin
         -- if stall occurs, if_id_instr will not get updated and the same instruction will
         -- stay in decode until hazard resolved
         opcode <= cur_opcode;
+        opcode_type <= cur_opcode_type;
         funct3 <= cur_funct3;
         funct7 <= cur_funct7;
         rs1 <= cur_rs1;
@@ -415,7 +432,7 @@ begin
             id_ex_imm_U <= cur_imm_U;
             id_ex_imm_J <= cur_imm_J;
             id_ex_rd_reg1 <= cur_rd; -- for hazard detection
-            id_ex_op_type <= cur_opcode(2 downto 0); -- for hazard detection
+            id_ex_op_type <= cur_opcode_type; -- decoded instruction type for later stages
         end if;
         --------------
         -- EX stage --
