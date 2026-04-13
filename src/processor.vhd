@@ -37,8 +37,6 @@ signal funct3: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000";
 signal rs2: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
 signal rs1: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
 signal rd: STD_LOGIC_VECTOR(4 DOWNTO 0) := "00000";
-signal opcode_type: STD_LOGIC_VECTOR(2 DOWNTO 0) := "000"; -- for ALU
-
 -- instructions encoding
 constant ALU_ADD : std_logic_vector(3 downto 0) := "0000"; -- cover ADD and ADDI
 constant ALU_SUB : std_logic_vector(3 downto 0) := "0001";
@@ -97,13 +95,7 @@ signal regs: reg_file_t := (others => (others => '0')); -- register file with 32
 signal pc: INTEGER := 0; -- program counter
 signal if_id_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latch instruction from fetch to decode
 
--- intermediate signal to inform next stage to proceed
-signal start_new_fetch: STD_LOGIC := '1'; -- to inform fetch stage to fetch new instructions 
-signal id_alu_op: STD_LOGIC_VECTOR(3 downto 0); 
-signal id_mem_read: STD_LOGIC := '0'; -- store control signal for load operation
-signal id_mem_write: STD_LOGIC := '0'; -- store control signal for store operation
-signal id_mem_to_reg_write: STD_LOGIC := '0'; -- store control signal for mem to register operation
-signal id_reg_write: STD_LOGIC := '0'; -- store control signal for load operation
+-- intermediate signals for pipeline control
 signal id_ex_alu_op: STD_LOGIC_VECTOR(3 downto 0); -- latch the operation
 signal id_ex_rs2_val, id_ex_rs1_val: STD_LOGIC_VECTOR(31 downto 0); -- latch the values from registrs
 signal id_ex_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the destination register
@@ -123,9 +115,6 @@ signal id_ex_reg_write: STD_LOGIC := '0'; -- check if the instruction is a regis
 signal ex_mem_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from execute to memory
 signal mem_wb_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from memory to writeback
 signal mem_wb_mem_to_reg_write: STD_LOGIC := '0'; -- latch the mem_to_reg signal from memory to writeback
-signal mem_mem_transfer_done: STD_LOGIC := '0'; -- to indicate if the memory operations in MEM is completed or not
-signal mem_transfer_count: INTEGER range 0 to 3 := 0; -- to indicate how many bytes are sent
-signal mem_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to store the read data
 signal mem_wb_read_data: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to latch read data
 
 -- for decode to store the immediate values
@@ -140,6 +129,19 @@ signal id_ex_imm_S: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
 signal id_ex_imm_B: STD_LOGIC_VECTOR(11 downto 0) := (others => '0');
 signal id_ex_imm_U: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
 signal id_ex_imm_J: STD_LOGIC_VECTOR(19 downto 0) := (others => '0');
+
+-- for hazard detection: store the destination register from previous instructions
+signal id_ex_rd_reg1: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in EX stage
+signal ex_mem_rd_reg2: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in MEM stage
+signal mem_wb_rd_reg3: STD_LOGIC_VECTOR(4 downto 0) := (others => '0'); -- to store the destination register from previous instruction in WB stage
+signal id_ex_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in EX stage for hazard detection
+signal ex_mem_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in MEM stage for hazard detection
+signal mem_wb_op_type: STD_LOGIC_VECTOR(2 downto 0) := (others => '0'); -- to store the type of the instruction in WB stage for hazard detection
+signal id_ex_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in EX stage
+signal ex_mem_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in MEM stage
+signal mem_wb_hazard: STD_LOGIC := '0'; -- to indicate if there is a hazard detected in WB stage
+signal uses_rs1: STD_LOGIC := '0'; -- whether current decoded instruction reads rs1
+signal uses_rs2: STD_LOGIC := '0'; -- whether current decoded instruction reads rs2
 
 begin
 -- data memory
@@ -166,177 +168,193 @@ port map(
     waitrequest => i_waitrequest
 );
 
--- trigger when opcode, funct3 and funct7 are changed
--- TODO: 
--- Input: opcode, funct3, funct7
--- Output: assign the correct id_alu_op
--- This is combinational logic triggered by sensitivities in opcode, funct3 and funct7. 
--- This is used to ensure decode finishes in 1 cc
-process(opcode, funct3, funct7) 
-begin
-    -- reset to default
-    id_alu_op <= ALU_ADD;
-    id_mem_read <= '0';
-    id_mem_write <= '0';
-    id_reg_write <= '0';
-    id_mem_to_reg_write <= '0';
-
-    -- determine which process 
-    case opcode is
-        when OPCODE_R =>
-            opcode_type <= R_TYPE;
-            if funct7 = "0000001" and funct3 = "000" then
-                id_alu_op <= ALU_MUL; -- mul
-            else
-                case funct3 is -- specific op
-                    when "000" => -- sub or add
-                        if funct7 = "0100000" then
-                            id_alu_op <= ALU_SUB;
-                        else
-                            id_alu_op <= ALU_ADD;
-                        end if;
-                    when "100" => -- xor
-                        id_alu_op <= ALU_XOR;
-                    when "110" => -- or
-                        id_alu_op <= ALU_OR;
-                    when "111" => -- and
-                        id_alu_op <= ALU_AND;
-                    when "001" => -- shift left logical
-                        id_alu_op <= ALU_SLL;
-                    when "010" => -- set less than
-                        id_alu_op <= ALU_SLT;
-                    when "011" => -- set less than (unsigned)
-                        id_alu_op <= ALU_SLTU;
-                    when "101" => -- shift right logical or arith
-                        if funct7 = "0100000" then
-                            id_alu_op <= ALU_SRA;
-                        else
-                            id_alu_op <= ALU_SRL;
-                        end if;
-                    when others => 
-                        id_alu_op <= ALU_ADD; -- safety
-                end case;
-            end if;
-        
-        when OPCODE_IMM =>
-            opcode_type <= I_TYPE;
-            case funct3 is
-                when "000" => -- add imm
-                    id_alu_op <= ALU_ADD;
-                when "100" => -- xor imm
-                    id_alu_op <= ALU_XOR;
-                when "110" => -- or imm
-                    id_alu_op <= ALU_OR;
-                when "111" => -- and imm
-                    id_alu_op <= ALU_AND;
-                when "001" => -- shift left logical imm
-                    id_alu_op <= ALU_SLL;
-                when "010" => -- set less than imm
-                    id_alu_op <= ALU_SLT;
-                when "011" => -- set less than imm (unsigned)
-                    id_alu_op <= ALU_SLT;
-                when "101" => -- srl imm or sra imm
-                    if funct7 = "010000" then
-                        id_alu_op <= ALU_SRA;
-                    else
-                        id_alu_op <= ALU_SRL;
-                    end if;
-                when others =>
-                    id_alu_op <= ALU_ADD;
-            end case;
-        
-        when OPCODE_LOAD =>
-            opcode_type <= I_TYPE;
-            id_alu_op <= ALU_ADD;
-
-        when OPCODE_STORE =>
-            opcode_type <= S_TYPE;
-            id_alu_op <= ALU_ADD;
-        
-        when OPCODE_B =>
-            opcode_type <= B_TYPE;
-            case funct3 is
-                    when "000" => -- branch equal
-                        id_alu_op <= ALU_BEQ;
-                    when "001" => -- branch not equal
-                        id_alu_op <= ALU_BNE;
-                    when "100" => -- branch less than
-                        id_alu_op <= ALU_BLT;
-                    when "101" => -- branch greater than
-                        id_alu_op <= ALU_BGE;
-                    when "110" => -- branch less than
-                        id_alu_op <= ALU_BLT;
-                    when "111" => -- branch greater or equal
-                        id_alu_op <= ALU_BGE;
-                    when others =>
-                        id_alu_op <= ALU_BEQ;
-            end case;
-
-        when OPCODE_JAL =>
-            opcode_type <= J_TYPE;
-            id_alu_op <= ALU_ADD; 
-
-        when OPCODE_JALR =>
-            opcode_type <= I_TYPE;
-            id_alu_op <= ALU_ADD; 
-
-        when OPCODE_LUI | OPCODE_AUIPC =>
-            opcode_type <= U_TYPE;
-            id_alu_op <= ALU_ADD;
-
-        when others =>
-            opcode_type <= R_TYPE;
-            id_alu_op <= ALU_ADD;
-        end case;
-        
-
-    end case; 
-    -- determine control signal
-    if (opcode = OPCODE_LOAD) then
-        -- load op
-        id_mem_read <= '1';
-        id_mem_write <= '0';
-        id_reg_write <= '1';
-        id_mem_to_reg_write <= '1';
-    elsif (opcode = OPCODE_STORE) then
-        -- store op
-        id_mem_write <= '1';
-        id_mem_read <= '0';
-        id_reg_write <= '0';
-        id_mem_to_reg_write <= '0';
-    elsif (opcode = OPCODE_R or opcode = OPCODE_IMM) then
-        -- ALU with register
-        id_reg_write <= '1';
-        id_mem_read <= '0';
-        id_mem_write <= '0';
-        id_mem_to_reg_write <= '0';
-    else 
-        -- rest of ALU
-        id_mem_read <= '0';
-        id_mem_write <= '0';
-        id_reg_write <= '0';
-        id_mem_to_reg_write <= '0';
-    end if;
-    -- go back to execute 
-end process;
-
 -- processor pipeline 
 process(clock, reset)
+    -- added variables for decode to get the control siganls within the same cycle
+    variable cur_opcode   : STD_LOGIC_VECTOR(6 downto 0);
+    variable cur_funct3   : STD_LOGIC_VECTOR(2 downto 0);
+    variable cur_funct7   : STD_LOGIC_VECTOR(6 downto 0);
+    variable cur_rs1      : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_rs2      : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_rd       : STD_LOGIC_VECTOR(4 downto 0);
+    variable cur_imm_I    : STD_LOGIC_VECTOR(11 downto 0);
+    variable cur_imm_S    : STD_LOGIC_VECTOR(11 downto 0);
+    variable cur_imm_B    : STD_LOGIC_VECTOR(11 downto 0);
+    variable cur_imm_U    : STD_LOGIC_VECTOR(19 downto 0);
+    variable cur_imm_J    : STD_LOGIC_VECTOR(19 downto 0);
+    variable cur_uses_rs1 : STD_LOGIC;
+    variable cur_uses_rs2 : STD_LOGIC;
+    variable cur_id_alu_op : STD_LOGIC_VECTOR(3 downto 0);
+    variable cur_id_mem_read : STD_LOGIC;
+    variable cur_id_mem_write : STD_LOGIC;
+    variable cur_id_reg_write : STD_LOGIC;
+    variable cur_id_mem_to_reg_write : STD_LOGIC;
+    variable stall        : STD_LOGIC;
 begin
     if (reset = '1') then 
         -- reset all intermediate signals here
     elsif (rising_edge(clock)) then
+        -- setting up the control signals for current instruction
+        cur_opcode := if_id_instr(6 downto 0);
+        cur_funct3 := if_id_instr(14 downto 12);
+        cur_funct7 := if_id_instr(31 downto 25);
+        cur_rs1 := if_id_instr(19 downto 15);
+        cur_rs2 := if_id_instr(24 downto 20);
+        cur_rd := if_id_instr(11 downto 7);
+        cur_imm_I := if_id_instr(31 downto 20);
+        cur_imm_S := if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
+        cur_imm_B := if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
+        cur_imm_U := if_id_instr(31 downto 12);
+        cur_imm_J := if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
+
+        -- determine if the current instruction uses rs1 and rs2 for hazard detection
+        if (cur_opcode = OPCODE_R or cur_opcode = OPCODE_STORE or cur_opcode = OPCODE_B) then
+            cur_uses_rs1 := '1';
+            cur_uses_rs2 := '1';
+        elsif (cur_opcode = OPCODE_IMM or cur_opcode = OPCODE_LOAD or cur_opcode = OPCODE_JALR) then
+            cur_uses_rs1 := '1';
+            cur_uses_rs2 := '0';
+        else
+            cur_uses_rs1 := '0';
+            cur_uses_rs2 := '0';
+        end if;
+
+        -- Decode ALU and writeback/memory controls locally so ID/EX sees a
+        -- self-consistent set of values in this clock cycle.
+        cur_id_alu_op := ALU_ADD;
+        cur_id_mem_read := '0';
+        cur_id_mem_write := '0';
+        cur_id_reg_write := '0';
+        cur_id_mem_to_reg_write := '0';
+
+        case cur_opcode is
+            when OPCODE_R =>
+                cur_id_reg_write := '1';
+                if (cur_funct7 = "0000001" and cur_funct3 = "000") then
+                    cur_id_alu_op := ALU_MUL;
+                else
+                    case cur_funct3 is
+                        when "000" =>
+                            if (cur_funct7 = "0100000") then
+                                cur_id_alu_op := ALU_SUB;
+                            else
+                                cur_id_alu_op := ALU_ADD;
+                            end if;
+                        when "100" =>
+                            cur_id_alu_op := ALU_XOR;
+                        when "110" =>
+                            cur_id_alu_op := ALU_OR;
+                        when "111" =>
+                            cur_id_alu_op := ALU_AND;
+                        when "001" =>
+                            cur_id_alu_op := ALU_SLL;
+                        when "010" | "011" =>
+                            cur_id_alu_op := ALU_SLT;
+                        when "101" =>
+                            if (cur_funct7 = "0100000") then
+                                cur_id_alu_op := ALU_SRA;
+                            else
+                                cur_id_alu_op := ALU_SRL;
+                            end if;
+                        when others =>
+                            cur_id_alu_op := ALU_ADD;
+                    end case;
+                end if;
+
+            when OPCODE_IMM =>
+                cur_id_reg_write := '1';
+                case cur_funct3 is
+                    when "000" =>
+                        cur_id_alu_op := ALU_ADD;
+                    when "100" =>
+                        cur_id_alu_op := ALU_XOR;
+                    when "110" =>
+                        cur_id_alu_op := ALU_OR;
+                    when "111" =>
+                        cur_id_alu_op := ALU_AND;
+                    when "001" =>
+                        cur_id_alu_op := ALU_SLL;
+                    when "010" | "011" =>
+                        cur_id_alu_op := ALU_SLT;
+                    when "101" =>
+                        if (cur_funct7 = "0100000") then
+                            cur_id_alu_op := ALU_SRA;
+                        else
+                            cur_id_alu_op := ALU_SRL;
+                        end if;
+                    when others =>
+                        cur_id_alu_op := ALU_ADD;
+                end case;
+
+            when OPCODE_LOAD =>
+                cur_id_alu_op := ALU_ADD;
+                cur_id_mem_read := '1';
+                cur_id_reg_write := '1';
+                cur_id_mem_to_reg_write := '1';
+
+            when OPCODE_STORE =>
+                cur_id_alu_op := ALU_ADD;
+                cur_id_mem_write := '1';
+
+            when OPCODE_B =>
+                case cur_funct3 is
+                    when "000" =>
+                        cur_id_alu_op := ALU_BEQ;
+                    when "001" =>
+                        cur_id_alu_op := ALU_BNE;
+                    when "100" | "110" =>
+                        cur_id_alu_op := ALU_BLT;
+                    when "101" | "111" =>
+                        cur_id_alu_op := ALU_BGE;
+                    when others =>
+                        cur_id_alu_op := ALU_BEQ;
+                end case;
+
+            when OPCODE_JAL | OPCODE_JALR | OPCODE_LUI | OPCODE_AUIPC =>
+                cur_id_alu_op := ALU_ADD;
+                cur_id_reg_write := '1';
+
+            when others =>
+                cur_id_alu_op := ALU_ADD;
+        end case;
+
+        stall := '0';
+        -- logic to determine whether stall is occuring or not
+        -- if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and
+        --     ((cur_uses_rs1 = '1' and id_ex_rd_reg1 = cur_rs1) or
+        --      (cur_uses_rs2 = '1' and id_ex_rd_reg1 = cur_rs2))) then
+        --     id_ex_hazard <= '1';
+        --     stall := '1';
+        -- else
+        --     id_ex_hazard <= '0';
+        -- end if;
+        -- if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and
+        --     ((cur_uses_rs1 = '1' and ex_mem_rd_reg2 = cur_rs1) or
+        --      (cur_uses_rs2 = '1' and ex_mem_rd_reg2 = cur_rs2))) then
+        --     ex_mem_hazard <= '1';
+        --     stall := '1';
+        -- else
+        --     ex_mem_hazard <= '0';
+        -- end if;
+        -- if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and
+        --     ((cur_uses_rs1 = '1' and mem_wb_rd_reg3 = cur_rs1) or
+        --      (cur_uses_rs2 = '1' and mem_wb_rd_reg3 = cur_rs2))) then
+        --     mem_wb_hazard <= '1';
+        --     stall := '1';
+        -- else
+        --     mem_wb_hazard <= '0';
+        -- end if;
 
         --------------
         -- IF stage --
         --------------
         i_read <= '0';
-        -- TODO: stall if hazard detected in ID 
-        if (start_new_fetch = '1') then
+        if (stall = '0') then
             i_read <= '1';
             i_addr <= pc/4;
         end if;
-        if (i_waitrequest = '0') then
+
+        if (stall = '0' and i_waitrequest = '0') then
             if_id_instr <= i_readdata;
             pc <= pc + 4;
         end if;
@@ -344,38 +362,61 @@ begin
         --------------
         -- ID stage --
         -------------- 
-        -- TODO: implement hazard detection
-        -- Constraint: Check if the destination register from previous instructions are needed in either rs1 or rs2
-        -- If hazard, should stall until the instruction completes 
+       -- If hazard, should stall until the instruction completes 
 
         -- assign each var the respective value retrieved from fetch 
-        opcode <= if_id_instr(6 downto 0);
-        funct3 <= if_id_instr(14 downto 12);
-        funct7 <= if_id_instr(31 downto 25);
-        rs1 <= if_id_instr(19 downto 15);
-        rs2 <= if_id_instr(24 downto 20);
-        rd  <= if_id_instr(11 downto 7);
-        imm_I <= if_id_instr(31 downto 20);
-        imm_S <= if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
-        imm_B <= if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
-        imm_U <= if_id_instr(31 downto 12);
-        imm_J <= if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
-        
+        -- if stall occurs, if_id_instr will not get updated and the same instruction will
+        -- stay in decode until hazard resolved
+        opcode <= cur_opcode;
+        funct3 <= cur_funct3;
+        funct7 <= cur_funct7;
+        rs1 <= cur_rs1;
+        rs2 <= cur_rs2;
+        rd  <= cur_rd;
+        imm_I <= cur_imm_I;
+        imm_S <= cur_imm_S;
+        imm_B <= cur_imm_B;
+        imm_U <= cur_imm_U;
+        imm_J <= cur_imm_J;
+        uses_rs1 <= cur_uses_rs1;
+        uses_rs2 <= cur_uses_rs2;
+
+
         -- Latch result from DECODE to EXECUTE
-        id_ex_alu_op <= id_alu_op;
-        id_ex_rs1_val <= regs(to_integer(unsigned(rs1))); -- 32 bit value stored in rs1
-        id_ex_rs2_val <= regs(to_integer(unsigned(rs2))); -- 32 bit value stored in rs2
-        id_ex_rd <= rd;
-        id_ex_mem_write <= id_mem_write;
-        id_ex_mem_read <= id_mem_read;
-        id_ex_reg_write <= id_reg_write;
-        id_ex_mem_to_reg_write <= id_mem_to_reg_write;
-        id_ex_imm_I <= imm_I;
-        id_ex_imm_S <= imm_S;
-        id_ex_imm_B <= imm_B;
-        id_ex_imm_U <= imm_U;
-        id_ex_imm_J <= imm_J;
-        
+        -- when stall occurs, insert NOPs
+        if (stall = '1') then
+            id_ex_alu_op <= "0000";
+            id_ex_rs1_val <= (others => '0');
+            id_ex_rs2_val <= (others => '0');
+            id_ex_rd <= "00000";
+            id_ex_mem_write <= '0';
+            id_ex_mem_read <= '0';
+            id_ex_reg_write <= '0';
+            id_ex_mem_to_reg_write <= '0';
+            id_ex_imm_I <= (others => '0');
+            id_ex_imm_S <= (others => '0');
+            id_ex_imm_B <= (others => '0');
+            id_ex_imm_U <= (others => '0');
+            id_ex_imm_J <= (others => '0');
+            id_ex_rd_reg1 <= (others => '0'); -- bubble should not appear as a writer next cycle
+            id_ex_op_type <= (others => '0');
+        else
+            id_ex_alu_op <= cur_id_alu_op;
+            id_ex_rs1_val <= regs(to_integer(unsigned(cur_rs1))); -- 32 bit value stored in rs1
+            id_ex_rs2_val <= regs(to_integer(unsigned(cur_rs2))); -- 32 bit value stored in rs2
+            id_ex_rd <= cur_rd;
+            id_ex_mem_write <= cur_id_mem_write;
+            id_ex_mem_read <= cur_id_mem_read;
+            id_ex_reg_write <= cur_id_reg_write;
+            id_ex_mem_to_reg_write <= cur_id_mem_to_reg_write;
+            id_ex_imm_I <= cur_imm_I;
+            id_ex_imm_S <= cur_imm_S;
+            id_ex_imm_B <= cur_imm_B;
+            id_ex_imm_U <= cur_imm_U;
+            id_ex_imm_J <= cur_imm_J;
+            id_ex_rd_reg1 <= cur_rd; -- for hazard detection
+            id_ex_op_type <= cur_opcode(2 downto 0); -- for hazard detection
+        end if;
         --------------
         -- EX stage --
         --------------
@@ -394,6 +435,9 @@ begin
         ex_mem_ALU_output <= ex_ALU_output;
         ex_mem_mem_to_reg_write <= id_ex_mem_to_reg_write;
         ex_mem_rs2_val <= id_ex_rs2_val;
+        ex_mem_rd_reg2 <= id_ex_rd_reg1; -- for hazard detection
+        ex_mem_op_type <= id_ex_op_type; -- for hazard detection
+        ex_mem_reg_write <= id_ex_reg_write; -- for hazard detection
 
         ---------------
         -- MEM stage --
@@ -421,7 +465,10 @@ begin
         mem_wb_ALU_output <= ex_mem_ALU_output;
         mem_wb_reg_write <= ex_mem_reg_write; 
         mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
-
+        
+        mem_wb_rd_reg3 <= ex_mem_rd_reg2; -- for hazard detection
+        mem_wb_op_type <= ex_mem_op_type; -- for hazard detection
+        mem_wb_reg_write <= ex_mem_reg_write; -- for hazard detection
         --------------
         -- WB stage --
         --------------
