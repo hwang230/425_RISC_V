@@ -429,33 +429,47 @@ begin
         end case;
 
         stall := '0';
+        
+        -- This injects a 1-cycle bubble into EX behind every Load
+        if (id_ex_mem_read = '1') then 
+            stall := '1';
+        end if;
+        
         -- logic to determine whether stall is occuring or not
-        -- if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and
-        --     ((cur_uses_rs1 = '1' and id_ex_rd_reg1 = cur_rs1) or
-        --      (cur_uses_rs2 = '1' and id_ex_rd_reg1 = cur_rs2))) then
-        --     id_ex_hazard <= '1';
-        --     stall := '1';
-        -- else
-        --     id_ex_hazard <= '0';
-        -- end if;
-        -- if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and
-        --     ((cur_uses_rs1 = '1' and ex_mem_rd_reg2 = cur_rs1) or
-        --      (cur_uses_rs2 = '1' and ex_mem_rd_reg2 = cur_rs2))) then
-        --     ex_mem_hazard <= '1';
-        --     stall := '1';
-        -- else
-        --     ex_mem_hazard <= '0';
-        -- end if;
-        -- if (mem_wb_reg_write = '1' and mem_wb_rd_reg3 /= "00000" and
-        --     ((cur_uses_rs1 = '1' and mem_wb_rd_reg3 = cur_rs1) or
-        --      (cur_uses_rs2 = '1' and mem_wb_rd_reg3 = cur_rs2))) then
-        --     mem_wb_hazard <= '1';
-        --     stall := '1';
-        -- else
-        --     mem_wb_hazard <= '0';
-        -- end if;
+        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and
+            ((cur_uses_rs1 = '1' and id_ex_rd_reg1 = cur_rs1) or
+             (cur_uses_rs2 = '1' and id_ex_rd_reg1 = cur_rs2))) then
+            id_ex_hazard <= '1';
+            stall := '1';
+        else
+            id_ex_hazard <= '0';
+        end if;
+        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and
+            ((cur_uses_rs1 = '1' and ex_mem_rd_reg2 = cur_rs1) or
+             (cur_uses_rs2 = '1' and ex_mem_rd_reg2 = cur_rs2))) then
+            ex_mem_hazard <= '1';
+            stall := '1';
+        else
+            ex_mem_hazard <= '0';
+        end if;
+        if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000" and
+            ((cur_uses_rs1 = '1' and mem_wb_rd = cur_rs1) or
+             (cur_uses_rs2 = '1' and mem_wb_rd = cur_rs2))) then
+            mem_wb_hazard <= '1';
+            stall := '1';
+        else
+            mem_wb_hazard <= '0';
+        end if;
 
-               --------------
+        -- Loads spend one extra cycle in load_pending before MEM/WB updates are
+        -- visible to this process, so keep decode stalled on that destination.
+        if (load_pending = '1' and pending_reg_write = '1' and pending_rd /= "00000" and
+            ((cur_uses_rs1 = '1' and pending_rd = cur_rs1) or
+             (cur_uses_rs2 = '1' and pending_rd = cur_rs2))) then
+            stall := '1';
+        end if;
+
+        --------------
         -- IF stage --
         --------------
 
@@ -582,8 +596,10 @@ begin
         if load_pending = '1' then
             mem_wb_read_data <= d_readdata;
             mem_wb_rd <= pending_rd;
+            mem_wb_rd_reg3 <= pending_rd;
             mem_wb_reg_write <= pending_reg_write;
             mem_wb_mem_to_reg_write <= '1';
+            mem_wb_op_type <= I_TYPE;
             load_pending <= '0';
 
         elsif ex_mem_mem_read = '1' then
@@ -601,14 +617,18 @@ begin
             d_writedata <= ex_mem_rs2_val;
 
             mem_wb_rd <= ex_mem_rd;
+            mem_wb_rd_reg3 <= ex_mem_rd;
             mem_wb_ALU_output <= ex_mem_ALU_output;
             mem_wb_reg_write <= ex_mem_reg_write;
             mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
+            mem_wb_op_type <= ex_mem_op_type;
         else
             mem_wb_rd <= ex_mem_rd;
+            mem_wb_rd_reg3 <= ex_mem_rd;
             mem_wb_ALU_output <= ex_mem_ALU_output;
             mem_wb_reg_write <= ex_mem_reg_write;
             mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
+            mem_wb_op_type <= ex_mem_op_type;
         end if;
         --------------
         -- WB stage --
