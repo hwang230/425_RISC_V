@@ -1,23 +1,36 @@
 # 425_RISC_V
 
-This repository contains the source code for the **Write-Back Cache** project as part of **ECSE 425: Computer Architecture**. 
+This repository contains a VHDL implementation of a simple pipelined RISC-V processor for **ECSE 425: Computer Architecture**.
 
-### Modules
-1. **`cache.vhd`**: The controller responsible for state transitions, hit/miss detection, and coordinating write-back/allocate sequences.
-2. **`cache_storage.vhd`**: The internal memory array housing 32 blocks (128 bits each), including Valid and Dirty bit management.
+The project includes:
+- a top-level processor with instruction and data memory
+- modular ALU subcomponents for arithmetic, logic, shifts, multiply, and branches
+- ModelSim testbenches for processor integration and unit-level verification
+- sample assembly programs and their corresponding 32-bit binary program files
 
-## Verification Strategy
-The goal is to achieve 100% transition coverage of the FSM and verify all reachable functional cases.
+## Project Structure
 
-### Reachable Case Matrix
-| Case | State | Access | Tag | Action |
-| :--- | :--- | :--- | :--- | :--- |
-| 1-4 | Invalid | R/W | Any | **Miss**: Fetch from Memory |
-| 9 | Valid/Clean | Read | Match | **Hit**: Return Data |
-| 11 | Valid/Clean | Write | Match | **Hit**: Update + Set Dirty |
-| 10/12 | Valid/Clean | R/W | Mismatch | **Miss**: Evict + Fetch |
-| 14/16 | Valid/Dirty | R/W | Mismatch | **Write-Back**: Save old block + Fetch new |
+### Source Files
+- `src/processor.vhd`: top-level processor datapath and control
+- `src/memory.vhd`: instruction/data memory model with configurable delay and waitrequest behavior
+- `src/alu/alu.vhd`: ALU top-level wrapper
+- `src/alu/alu_arithmetic.vhd`: add/subtract operations
+- `src/alu/alu_logical.vhd`: and/or/xor/slt-style operations
+- `src/alu/alu_shift.vhd`: shift operations
+- `src/alu/alu_multiply.vhd`: multiply operation
+- `src/alu/alu_branch.vhd`: branch comparison logic
 
-### Running Tests
-* **Integration Test**: Run `cache_tb.vhd` against the full `cache.vhd` top-level to verify end-to-end Avalon timing.
+### Testbenches
+- `tests/processor_tb.vhd`: full processor integration testbench
+- `tests/unit/alu_components/*.vhd`: ALU component unit tests
 
+### Programs
+- To run the integration flow, the active program should be placed in the same directory as `testbench.tcl` and named `program.txt`.
+
+## Processor Test Flow
+The integration flow uses `testbench.tcl` to:
+1. compile the processor and its dependencies
+2. load `program.txt` into instruction memory
+3. run the simulation for `10000 ns`
+4. dump register file contents to `register_file.txt`
+5. dump data memory contents to `memory.txt`
