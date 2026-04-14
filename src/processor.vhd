@@ -60,7 +60,7 @@ constant ALU_BGE : std_logic_vector(3 downto 0) := "1101";
 component memory is 
 GENERIC(
     ram_size : INTEGER := 32768;
-    mem_delay : time := 1 ns;
+    mem_delay : time := 10 ns;
     clock_period : time := 1 ns
 );
 PORT (
