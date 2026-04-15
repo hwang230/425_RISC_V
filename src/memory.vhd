@@ -31,7 +31,6 @@ BEGIN
 	--This is the main section of the SRAM model
 	mem_process: PROCESS (clock)
 	BEGIN
-		--This is a cheap trick to initialize the SRAM in simulation
 
 		--This is the actual synthesizable SRAM block
 		IF (clock'event AND clock = '1') THEN

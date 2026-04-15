@@ -97,5 +97,3 @@ puts "Dumping register file"
 DumpRegisterFile ./register_file.txt
 puts "Dumping data memory"
 DumpDataMemory ./memory.txt
-
-quit -f
