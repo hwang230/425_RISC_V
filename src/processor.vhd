@@ -32,6 +32,8 @@ constant J_TYPE: STD_LOGIC_VECTOR(2 DOWNTO 0) := "101";
 
 -- signal for fetch
 signal fetch_pending: std_Logic := '0';
+signal fetch_pc_pending: INTEGER := 0;
+signal fetch_response_pending: std_logic := '0';
 -- signals for decoding instructions
 signal opcode: STD_LOGIC_VECTOR(6 DOWNTO 0) := "0000000";
 signal opcode_type: STD_LOGIC_VECTOR(2 DOWNTO 0) := (others => '0');
@@ -60,7 +62,7 @@ constant ALU_BGE : std_logic_vector(3 downto 0) := "1101";
 component memory is 
 GENERIC(
     ram_size : INTEGER := 32768;
-    mem_delay : time := 10 ns; -- keep at 10ns for it to work
+    mem_delay : time := 1 ns;
     clock_period : time := 1 ns
 );
 PORT (
@@ -97,11 +99,13 @@ type reg_file_t is array (0 to 31) of std_logic_vector(31 downto 0);
 signal regs: reg_file_t := (others => (others => '0')); -- register file with 32 registers with 32 bits each
 signal pc: INTEGER := 0; -- program counter
 signal if_id_instr: STD_LOGIC_VECTOR(31 DOWNTO 0) := (others => '0'); -- to latch instruction from fetch to decode
+signal if_id_valid: STD_LOGIC := '0';
 
 -- intermediate signals for pipeline control
 signal id_ex_alu_op: STD_LOGIC_VECTOR(3 downto 0); -- latch the operation
 signal id_ex_opcode: STD_LOGIC_VECTOR(6 downto 0); -- latch the opcode
 signal if_id_pc : integer := 0;
+signal id_ex_valid : STD_LOGIC := '0';
 signal id_ex_pc : integer := 0;
 signal id_ex_rs2_val, id_ex_rs1_val: STD_LOGIC_VECTOR(31 downto 0); -- latch the values from registrs
 signal id_ex_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the destination register
@@ -113,9 +117,11 @@ signal ex_mem_ALU_output: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- l
 signal ex_mem_mem_read: STD_LOGIC := '0'; -- to latch the signal from decode to memory for load
 signal ex_mem_mem_write: STD_LOGIC := '0'; -- to latch the signal from decode to memory for store
 signal ex_mem_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the rd from EX to MEM
+signal ex_mem_valid : STD_LOGIC := '0';
 signal ex_mem_mem_to_reg_write: STD_LOGIC := '0'; -- latch the mem_to_reg signal
 signal ex_mem_rs2_val: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- to latch rs2 value for store
 signal mem_wb_rd: STD_LOGIC_VECTOR(4 downto 0); -- latch the rd from EX to MEM
+signal mem_wb_valid : STD_LOGIC := '0';
 signal mem_wb_ALU_output: STD_LOGIC_VECTOR(31 downto 0) := (others => '0'); -- latch alu output from ex_mem to mem_wb
 signal id_ex_reg_write: STD_LOGIC := '0'; -- check if the instruction is a register operand
 signal ex_mem_reg_write: STD_LOGIC := '0'; -- latch the reg_write signal from execute to memory
@@ -166,9 +172,21 @@ signal pending_rd: std_logic_vector(4 downto 0) := (others => '0');
 signal pending_reg_write: std_logic := '0';
 signal pending_alu_output: std_logic_vector(31 downto 0) := (others => '0');
 
+-- signal for memory
+signal mem_pending       : std_logic := '0';
+signal mem_pending_read  : std_logic := '0';
+signal mem_pending_write : std_logic := '0';
+signal mem_response_pending : std_logic := '0';
+signal pending_addr      : integer := 0;
+signal pending_storedata : std_logic_vector(31 downto 0) := (others => '0');
+
 begin
 -- data memory
 D_MEM: memory
+generic map(
+    mem_delay => 1 ns,
+    clock_period => 1 ns
+)
 port map(
     clock => clock,
     writedata => d_writedata,
@@ -181,6 +199,10 @@ port map(
 
 -- instruction memory
 I_MEM: memory
+generic map(
+    mem_delay => 1 ns,
+    clock_period => 1 ns
+)
 port map(
     clock => clock,
     writedata => i_writedata,
@@ -264,9 +286,11 @@ begin
         regs <= (others => (others => '0'));
         pc <= 0;
         if_id_instr <= (others => '0');
+        if_id_valid <= '0';
         if_id_pc <= 0;
         id_ex_alu_op <= (others => '0');
         id_ex_opcode <= (others => '0');
+        id_ex_valid <= '0';
         id_ex_rs1_val <= (others => '0');
         id_ex_rs2_val <= (others => '0');
         id_ex_rd <= (others => '0');
@@ -277,10 +301,17 @@ begin
         ex_mem_mem_read <= '0';
         ex_mem_mem_write <= '0';
         ex_mem_rd <= (others => '0');
+        ex_mem_valid <= '0';
         ex_mem_mem_to_reg_write <= '0';
+        ex_mem_reg_write <= '0';
         ex_mem_rs2_val <= (others => '0');
         mem_wb_rd <= (others => '0');
+        mem_wb_valid <= '0';
         mem_wb_ALU_output <= (others => '0');
+        mem_wb_reg_write <= '0';
+        mem_wb_mem_to_reg_write <= '0';
+        mem_wb_read_data <= (others => '0');
+        id_ex_reg_write <= '0';
         id_ex_rd_reg1 <= (others => '0');
         ex_mem_rd_reg2 <= (others => '0');
         mem_wb_rd_reg3 <= (others => '0');
@@ -292,26 +323,55 @@ begin
         mem_wb_hazard <= '0';
         uses_rs1 <= '0';
         uses_rs2 <= '0';
+        fetch_pending <= '0';
+        fetch_pc_pending <= 0;
+        fetch_response_pending <= '0';
+        mem_pending <= '0';
+        mem_pending_read <= '0';
+        mem_pending_write <= '0';
+        mem_response_pending <= '0';
+        pending_rd <= (others => '0');
+        pending_reg_write <= '0';
+        pending_alu_output <= (others => '0');
+        pending_addr <= 0;
+        pending_storedata <= (others => '0');
+        i_read <= '0';
+        d_read <= '0';
+        d_write <= '0';
     elsif (rising_edge(clock)) then
         -- setting up the control signals for current instruction
-        cur_opcode := if_id_instr(6 downto 0);
-        cur_funct3 := if_id_instr(14 downto 12);
-        cur_funct7 := if_id_instr(31 downto 25);
-        cur_rs1 := if_id_instr(19 downto 15);
-        cur_rs2 := if_id_instr(24 downto 20);
-        cur_rd := if_id_instr(11 downto 7);
+        cur_opcode := (others => '0');
+        cur_funct3 := (others => '0');
+        cur_funct7 := (others => '0');
+        cur_rs1 := (others => '0');
+        cur_rs2 := (others => '0');
+        cur_rd := (others => '0');
         cur_opcode_type := (others => '0');
-        cur_imm_I := if_id_instr(31 downto 20);
-        cur_imm_S := if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
-        cur_imm_B := if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
-        cur_imm_U := if_id_instr(31 downto 12);
-        cur_imm_J := if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
+        cur_imm_I := (others => '0');
+        cur_imm_S := (others => '0');
+        cur_imm_B := (others => '0');
+        cur_imm_U := (others => '0');
+        cur_imm_J := (others => '0');
+
+        if (if_id_valid = '1') then
+            cur_opcode := if_id_instr(6 downto 0);
+            cur_funct3 := if_id_instr(14 downto 12);
+            cur_funct7 := if_id_instr(31 downto 25);
+            cur_rs1 := if_id_instr(19 downto 15);
+            cur_rs2 := if_id_instr(24 downto 20);
+            cur_rd := if_id_instr(11 downto 7);
+            cur_imm_I := if_id_instr(31 downto 20);
+            cur_imm_S := if_id_instr(31 downto 25) & if_id_instr(11 downto 7);
+            cur_imm_B := if_id_instr(31) & if_id_instr(7) & if_id_instr(30 downto 25) & if_id_instr(11 downto 8);
+            cur_imm_U := if_id_instr(31 downto 12);
+            cur_imm_J := if_id_instr(31) & if_id_instr(19 downto 12) & if_id_instr(20) & if_id_instr(30 downto 21);
+        end if;
 
         -- determine if the current instruction uses rs1 and rs2 for hazard detection
-        if (cur_opcode = OPCODE_R or cur_opcode = OPCODE_STORE or cur_opcode = OPCODE_B) then
+        if (if_id_valid = '1' and (cur_opcode = OPCODE_R or cur_opcode = OPCODE_STORE or cur_opcode = OPCODE_B)) then
             cur_uses_rs1 := '1';
             cur_uses_rs2 := '1';
-        elsif (cur_opcode = OPCODE_IMM or cur_opcode = OPCODE_LOAD or cur_opcode = OPCODE_JALR) then
+        elsif (if_id_valid = '1' and (cur_opcode = OPCODE_IMM or cur_opcode = OPCODE_LOAD or cur_opcode = OPCODE_JALR)) then
             cur_uses_rs1 := '1';
             cur_uses_rs2 := '0';
         else
@@ -433,13 +493,19 @@ begin
 
         stall := '0';
         
-        -- This injects a 1-cycle bubble into EX behind every Load
-        if (id_ex_mem_read = '1') then 
+        
+        -- Stall as soon as a memory op reaches EX/MEM so younger
+        -- instructions do not slip past the transaction setup cycle.
+        if (ex_mem_valid = '1' and (ex_mem_mem_read = '1' or ex_mem_mem_write = '1')) then
             stall := '1';
         end if;
-        
+
+        -- stall one cycle for mem access
+        if mem_pending = '1' then
+            stall := '1';
+        end if;
         -- logic to determine whether stall is occuring or not
-        if (id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and
+        if (id_ex_valid = '1' and id_ex_reg_write = '1' and id_ex_rd_reg1 /= "00000" and
             ((cur_uses_rs1 = '1' and id_ex_rd_reg1 = cur_rs1) or
              (cur_uses_rs2 = '1' and id_ex_rd_reg1 = cur_rs2))) then
             id_ex_hazard <= '1';
@@ -447,7 +513,7 @@ begin
         else
             id_ex_hazard <= '0';
         end if;
-        if (ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and
+        if (ex_mem_valid = '1' and ex_mem_reg_write = '1' and ex_mem_rd_reg2 /= "00000" and
             ((cur_uses_rs1 = '1' and ex_mem_rd_reg2 = cur_rs1) or
              (cur_uses_rs2 = '1' and ex_mem_rd_reg2 = cur_rs2))) then
             ex_mem_hazard <= '1';
@@ -455,7 +521,7 @@ begin
         else
             ex_mem_hazard <= '0';
         end if;
-        if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000" and
+        if (mem_wb_valid = '1' and mem_wb_reg_write = '1' and mem_wb_rd /= "00000" and
             ((cur_uses_rs1 = '1' and mem_wb_rd = cur_rs1) or
              (cur_uses_rs2 = '1' and mem_wb_rd = cur_rs2))) then
             mem_wb_hazard <= '1';
@@ -464,13 +530,6 @@ begin
             mem_wb_hazard <= '0';
         end if;
 
-        -- Loads spend one extra cycle in load_pending before MEM/WB updates are
-        -- visible to this process, so keep decode stalled on that destination.
-        if (load_pending = '1' and pending_reg_write = '1' and pending_rd /= "00000" and
-            ((cur_uses_rs1 = '1' and pending_rd = cur_rs1) or
-             (cur_uses_rs2 = '1' and pending_rd = cur_rs2))) then
-            stall := '1';
-        end if;
 
         --------------
         -- IF stage --
@@ -485,30 +544,40 @@ begin
 
             -- flush younger fetched instruction
             if_id_instr <= (others => '0');
+            if_id_valid <= '0';
             if_id_pc <= 0;
 
             -- cancel any in-flight fetch bookkeeping
             fetch_pending <= '0';
+            fetch_pc_pending <= 0;
+            fetch_response_pending <= '0';
+
+        elsif (fetch_response_pending = '1') then
+            if (stall = '0') then
+                if_id_instr <= i_readdata;
+                if_id_valid <= '1';
+                if_id_pc <= fetch_pc_pending;
+                pc <= fetch_pc_pending + 4;
+                fetch_response_pending <= '0';
+            end if;
+
+        elsif (fetch_pending = '1') then
+            -- A fetch has already been launched. Keep the address stable while
+            -- waiting for the memory model to pulse waitrequest low.
+            i_addr <= fetch_pc_pending / 4;
+
+            if (i_waitrequest = '0') then
+                fetch_pending <= '0';
+                fetch_response_pending <= '1';
+            end if;
 
         elsif (stall = '0') then
-            if (fetch_pending = '0') then
-                -- Step 1: issue memory read for current PC
-                i_addr <= pc / 4;
-                i_read <= '1';
-                -- to account for one cycle delay from accessing instruction memory
-                fetch_pending <= '1';
-
-            elsif (i_waitrequest = '0') then
-                -- Step 2: returned instruction is now valid
-                if_id_instr <= i_readdata;
-                if_id_pc <= pc;
-
-                -- advance PC only after instruction is accepted
-                pc <= pc + 4;
-
-                -- lower the control after finishing the fetch
-                fetch_pending <= '0';
-            end if;
+            -- Only start a new fetch when not stalled. The memory model treats
+            -- memread as an edge-triggered request, so this must be a pulse.
+            i_addr <= pc / 4;
+            i_read <= '1';
+            fetch_pending <= '1';
+            fetch_pc_pending <= pc;
         end if;
 
         --------------
@@ -536,11 +605,13 @@ begin
 
 
         -- Latch result from DECODE to EXECUTE
-        -- when stall occurs, insert NOPs
-        if (stall = '1' or flush_taken = '1') then
+        -- Only consume IF/ID when there is a valid decoded instruction.
+        -- During stalls we keep IF/ID intact so it can be retried later.
+        if (stall = '1' or flush_taken = '1' or if_id_valid = '0') then
             -- insert addi x0, x0, 0 as the bubble instruction in EX stage
             id_ex_alu_op <= "0000";
             id_ex_opcode <= "0000000";
+            id_ex_valid <= '0';
             id_ex_pc <= 0;
             id_ex_rs1_val <= (others => '0');
             id_ex_rs2_val <= (others => '0');
@@ -560,6 +631,7 @@ begin
             -- if no stalls, simply latch the values from decode to execute
             id_ex_alu_op <= cur_id_alu_op;
             id_ex_opcode <= cur_opcode;
+            id_ex_valid <= if_id_valid;
             id_ex_pc <= if_id_pc;
             id_ex_rs1_val <= regs(to_integer(unsigned(cur_rs1))); -- 32 bit value stored in rs1
             id_ex_rs2_val <= regs(to_integer(unsigned(cur_rs2))); -- 32 bit value stored in rs2
@@ -575,6 +647,7 @@ begin
             id_ex_imm_J <= cur_imm_J;
             id_ex_rd_reg1 <= cur_rd; -- for hazard detection
             id_ex_op_type <= cur_opcode_type; -- decoded instruction type for later stages
+            if_id_valid <= '0';
         end if;
 
         --------------
@@ -583,64 +656,114 @@ begin
         -- latch the control signals for mem stage from decode 
         -- main logic already performed in the ALU module, we just need to latch the 
         -- results and the controls signals to MEM stage
-        ex_mem_mem_read <= id_ex_mem_read;
-        ex_mem_mem_write <= id_ex_mem_write;
-        ex_mem_rd <= id_ex_rd;
-        ex_mem_reg_write <= id_ex_reg_write; 
-        ex_mem_ALU_output <= ex_ALU_output;
-        ex_mem_mem_to_reg_write <= id_ex_mem_to_reg_write;
-        ex_mem_rs2_val <= id_ex_rs2_val;
-        ex_mem_rd_reg2 <= id_ex_rd_reg1; -- for hazard detection
-        ex_mem_op_type <= id_ex_op_type; -- for hazard detection
-        ex_mem_reg_write <= id_ex_reg_write; -- for hazard detection
+        if mem_pending = '0' then
+            ex_mem_mem_read <= id_ex_mem_read;
+            ex_mem_mem_write <= id_ex_mem_write;
+            ex_mem_rd <= id_ex_rd;
+            ex_mem_valid <= id_ex_valid;
+            ex_mem_reg_write <= id_ex_reg_write;
+            ex_mem_ALU_output <= ex_ALU_output;
+            ex_mem_mem_to_reg_write <= id_ex_mem_to_reg_write;
+            ex_mem_rs2_val <= id_ex_rs2_val;
+            ex_mem_rd_reg2 <= id_ex_rd_reg1;
+            ex_mem_op_type <= id_ex_op_type;
+        end if;
 
         ---------------
         -- MEM stage --
         ---------------
 
         -- turn off the data mem signals before then turn it on afterwards if necessary
+
+        -- defaults
         d_write <= '0';
-        d_read <= '0';
-        if load_pending = '1' then
-            -- Second iter goes in here for load
-            -- Data is ready in d_readdata
+        d_read  <= '0';
+
+        -- Case 1: a memory transaction is already in progress
+        if mem_response_pending = '1' then
+            -- Complete a load one cycle after the memory accepted it so
+            -- synchronous readdata has time to reflect the requested address.
             mem_wb_read_data <= d_readdata;
             mem_wb_rd <= pending_rd;
+            mem_wb_valid <= '1';
             mem_wb_rd_reg3 <= pending_rd;
             mem_wb_reg_write <= pending_reg_write;
             mem_wb_mem_to_reg_write <= '1';
             mem_wb_op_type <= I_TYPE;
-            -- lower the signal to ensure loading finished
-            load_pending <= '0';
 
-        elsif ex_mem_mem_read = '1' then
-            -- set the addr and read signal
+            mem_response_pending <= '0';
+
+        elsif mem_pending = '1' then
+            d_addr <= pending_addr;
+
+            if mem_pending_read = '1' then
+                if d_waitrequest = '0' then
+                    mem_pending <= '0';
+                    mem_pending_read <= '0';
+                    mem_pending_write <= '0';
+                    mem_response_pending <= '1';
+                end if;
+
+            elsif mem_pending_write = '1' then
+                d_writedata <= pending_storedata;
+                -- Keep memwrite asserted while the store is pending so the
+                -- synchronous memory can observe it on the next clock edge.
+                d_write <= '1';
+                if d_waitrequest = '0' then
+                    -- store completes now
+                    mem_wb_rd <= pending_rd;
+                    mem_wb_valid <= '0';
+                    mem_wb_rd_reg3 <= pending_rd;
+                    mem_wb_ALU_output <= pending_alu_output;
+                    mem_wb_reg_write <= pending_reg_write;
+                    mem_wb_mem_to_reg_write <= '0';
+                    mem_wb_op_type <= S_TYPE;
+
+                    mem_pending <= '0';
+                    mem_pending_write <= '0';
+                    mem_pending_read <= '0';
+                    mem_response_pending <= '0';
+                end if;
+            end if;
+
+        -- Case 2: start a new load
+        elsif ex_mem_valid = '1' and ex_mem_mem_read = '1' then
+            -- Launch a one-cycle read pulse.
             d_read <= '1';
             d_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
 
-            -- this accounts for the extra cycle required to receive the data back
-            -- First iter goes in here for load
+            pending_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
             pending_rd <= ex_mem_rd;
             pending_reg_write <= ex_mem_reg_write;
             pending_alu_output <= ex_mem_ALU_output;
-            load_pending <= '1';
 
-        elsif ex_mem_mem_write = '1' then
-            -- set the addr, writedata and write signal
+            mem_pending <= '1';
+            mem_pending_read <= '1';
+            mem_pending_write <= '0';
+            mem_response_pending <= '0';
+
+        -- Case 3: start a new store
+        elsif ex_mem_valid = '1' and ex_mem_mem_write = '1' then
+            -- Launch a one-cycle write pulse.
             d_write <= '1';
             d_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
             d_writedata <= ex_mem_rs2_val;
+            
+            pending_addr <= to_integer(unsigned(ex_mem_ALU_output(31 downto 2)));
+            pending_storedata <= ex_mem_rs2_val;
+            pending_rd <= ex_mem_rd;
+            pending_reg_write <= ex_mem_reg_write;
+            pending_alu_output <= ex_mem_ALU_output;
 
-            -- latch the signals
-            mem_wb_rd <= ex_mem_rd;
-            mem_wb_rd_reg3 <= ex_mem_rd;
-            mem_wb_ALU_output <= ex_mem_ALU_output;
-            mem_wb_reg_write <= ex_mem_reg_write;
-            mem_wb_mem_to_reg_write <= ex_mem_mem_to_reg_write;
-            mem_wb_op_type <= ex_mem_op_type;
+            mem_pending <= '1';
+            mem_pending_read <= '0';
+            mem_pending_write <= '1';
+            mem_response_pending <= '0';
+
+        -- Case 4: normal ALU op, no memory access
         else
-            -- default: just latch the values
             mem_wb_rd <= ex_mem_rd;
+            mem_wb_valid <= ex_mem_valid;
             mem_wb_rd_reg3 <= ex_mem_rd;
             mem_wb_ALU_output <= ex_mem_ALU_output;
             mem_wb_reg_write <= ex_mem_reg_write;
@@ -653,7 +776,7 @@ begin
         
         -- Writing back to registers where needed
         -- protect x0 register 
-        if (mem_wb_reg_write = '1' and mem_wb_rd /= "00000") then
+        if (mem_wb_valid = '1' and mem_wb_reg_write = '1' and mem_wb_rd /= "00000") then
             if (mem_wb_mem_to_reg_write = '1') then
                 -- load
                 regs(to_integer(unsigned(mem_wb_rd))) <= mem_wb_read_data;
