@@ -1,6 +1,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 
+
 entity processor_tb is
 end processor_tb;
 
@@ -43,9 +44,9 @@ begin
 
     reset <= '1';
     wait for 5 * clk_period;
-    wait until rising_edge(clock);
     reset <= '0';
-
+    wait until rising_edge(clock);
+   
     -- Run the processor for 10000 cycles
     for cycle in 1 to run_cycles loop
         wait until rising_edge(clock);
